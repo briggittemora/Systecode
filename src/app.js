@@ -50,12 +50,15 @@ app.use('/api', guestPurchasesRouter);
 app.use('/', archivosRouter);
 
 // Serve built frontend (Vite) when available.
-// Prefer dist/ at repo root, fall back to frontend/dist.
+// Prefer backend/dist, then dist/ at repo root, then frontend/dist.
+const backendDistPath = path.resolve(__dirname, '..', 'dist');
 const rootDistPath = path.resolve(__dirname, '..', '..', 'dist');
 const frontendDistPath = path.resolve(__dirname, '..', '..', 'frontend', 'dist');
-const distPath = fs.existsSync(rootDistPath)
-  ? rootDistPath
-  : (fs.existsSync(frontendDistPath) ? frontendDistPath : null);
+const distPath = fs.existsSync(backendDistPath)
+  ? backendDistPath
+  : (fs.existsSync(rootDistPath)
+    ? rootDistPath
+    : (fs.existsSync(frontendDistPath) ? frontendDistPath : null));
 
 if (distPath) {
   app.use(express.static(distPath));
