@@ -1,6 +1,7 @@
 const express = require('express');
 const multer = require('multer');
 const { supabaseDB, supabaseStorage, SUPABASE_STORAGE_BUCKET } = require('../supabaseClient');
+const { getSupabaseUserFromRequest, getUserRowByEmail } = require('../utils/supabaseAuth');
 
 const router = express.Router();
 
@@ -9,6 +10,31 @@ const upload = multer({ storage: multer.memoryStorage() });
 const { Readable, pipeline } = require('stream');
 const { promisify } = require('util');
 const pipelineAsync = promisify(pipeline);
+
+const getVipFilePriceUsd = (rec) => {
+  const p = rec?.price_usd !== null && typeof rec?.price_usd !== 'undefined' ? Number(rec.price_usd) : null;
+  if (Number.isFinite(p) && p > 0) return p;
+
+  const rawEpago = rec?.epago !== null && typeof rec?.epago !== 'undefined' ? String(rec.epago).trim().toLowerCase() : null;
+  if (rawEpago === 'vip') return 2;
+  if (rawEpago !== null && rawEpago !== '' && !isNaN(Number(rawEpago))) {
+    const n = Number(rawEpago);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+
+  const tipoRaw = String(rec?.tipo || rec?.type || '').toLowerCase();
+  if (tipoRaw === 'vip') return 2;
+
+  return null;
+};
+
+const isVipFileRecord = (rec) => {
+  const tipoRaw = String(rec?.tipo || rec?.type || '').toLowerCase();
+  const p = getVipFilePriceUsd(rec);
+  return tipoRaw === 'vip' || (Number.isFinite(p) && p > 0) || String(rec?.epago || '').trim().toLowerCase() === 'vip';
+};
+
+const customIdForFile = (fileId) => `vip-file-${String(fileId)}`;
 
 // GET /api/files
 router.get('/files', async (req, res) => {
@@ -82,23 +108,11 @@ router.get('/files', async (req, res) => {
       const slug = (rawName && rawName.toString().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')) || `file-${rec.id}`;
       const preview_url = rec.preview_image_url || rec.preview_url || rec.preview_video_url || rec.preview || rec.supabase_url || null;
       const html_url = rec.file_url || rec.supabase_url || rec.html_url || null;
-      // Determine VIP status: prefer explicit 'gratuito' in `epago` to mark free,
-      // numeric `epago` > 0 marks VIP, otherwise fall back to `tipo` column.
       const rawEpago = (rec && typeof rec.epago !== 'undefined' && rec.epago !== null) ? String(rec.epago).trim().toLowerCase() : null;
-      let epagoNum = null;
-      let explicitFree = false;
-      let explicitVip = false;
-      if (rawEpago !== null) {
-        if (rawEpago === 'vip') {
-          explicitVip = true;
-        } else if (rawEpago === 'gratuito' || rawEpago === 'gratis' || rawEpago === 'free') {
-          explicitFree = true;
-        } else if (!isNaN(Number(rawEpago))) {
-          epagoNum = Number(rawEpago);
-        }
-      }
-      const isVip = explicitVip || ((!explicitFree && epagoNum !== null && epagoNum > 0) ) || String(rec.tipo || rec.type || '').toLowerCase() === 'vip';
-      const price = epagoNum !== null ? epagoNum : (rec.price || null);
+      const explicitFree = rawEpago === 'gratuito' || rawEpago === 'gratis' || rawEpago === 'free';
+      const priceUsd = getVipFilePriceUsd(rec);
+      const isVip = !explicitFree && isVipFileRecord(rec);
+      const price = Number.isFinite(priceUsd) ? priceUsd : null;
       return {
         id: rec.id,
         name: rawName || filename || `Archivo ${rec.id}`,
@@ -174,23 +188,11 @@ router.get('/file/:id', async (req, res) => {
     const slug = (rawName && rawName.toString().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')) || `file-${rec.id}`;
     const preview_url = rec.preview_image_url || rec.preview_url || rec.preview_video_url || rec.preview || rec.supabase_url || null;
     const html_url = rec.file_url || rec.supabase_url || rec.html_url || null;
-    // Determine VIP status: prefer explicit 'gratuito' in `epago` to mark free,
-    // numeric `epago` > 0 marks VIP, otherwise fall back to `tipo` column.
     const rawEpago2 = (rec && typeof rec.epago !== 'undefined' && rec.epago !== null) ? String(rec.epago).trim().toLowerCase() : null;
-    let epagoNum2 = null;
-    let explicitFree2 = false;
-    let explicitVip2 = false;
-    if (rawEpago2 !== null) {
-      if (rawEpago2 === 'vip') {
-        explicitVip2 = true;
-      } else if (rawEpago2 === 'gratuito' || rawEpago2 === 'gratis' || rawEpago2 === 'free') {
-        explicitFree2 = true;
-      } else if (!isNaN(Number(rawEpago2))) {
-        epagoNum2 = Number(rawEpago2);
-      }
-    }
-    const isVip = explicitVip2 || ((!explicitFree2 && epagoNum2 !== null && epagoNum2 > 0) ) || String(rec.tipo || rec.type || '').toLowerCase() === 'vip';
-    const price = epagoNum2 !== null ? epagoNum2 : (rec.price || null);
+    const explicitFree2 = rawEpago2 === 'gratuito' || rawEpago2 === 'gratis' || rawEpago2 === 'free';
+    const priceUsd2 = getVipFilePriceUsd(rec);
+    const isVip = !explicitFree2 && isVipFileRecord(rec);
+    const price = Number.isFinite(priceUsd2) ? priceUsd2 : null;
     const mapped = {
       id: rec.id,
       name: rawName || filename || `Archivo ${rec.id}`,
@@ -453,6 +455,59 @@ router.get('/file/:id/download', async (req, res) => {
     const { id } = req.params;
     const rec = await tryFindFileByIdOrSlug(id);
     if (!rec) return res.status(404).json({ error: 'Not found' });
+
+    // VIP gating: require auth + membership or per-file purchase
+    if (isVipFileRecord(rec)) {
+      // Guest unlock token support
+      const unlockToken = String(req.get('X-Unlock-Token') || req.query?.unlockToken || '').trim();
+      let guestAuthorized = false;
+      if (unlockToken) {
+        try {
+          const guestEmail = `guest:${unlockToken}`;
+          const customId = customIdForFile(rec.id || id);
+          const { data: grow, error: gerr } = await supabaseDB
+            .from('paypal_orders')
+            .select('order_id,status')
+            .eq('email', guestEmail)
+            .eq('custom_id', customId)
+            .limit(1);
+          if (!gerr) {
+            guestAuthorized = Array.isArray(grow) && grow.length > 0 && String(grow[0].status || '').toUpperCase() === 'COMPLETED';
+          }
+        } catch (e) {
+          guestAuthorized = false;
+        }
+      }
+
+      if (!guestAuthorized) {
+        const { user, error: authError } = await getSupabaseUserFromRequest(req);
+        if (!user || authError) {
+          return res.status(401).json({ error: 'No autorizado. Inicia sesión para descargar archivos VIP.' });
+        }
+        const email = user.email || null;
+        if (!email) return res.status(401).json({ error: 'No autorizado' });
+
+        const { row: dbUser } = await getUserRowByEmail(email);
+        const modalidad = String(dbUser?.modalidad || '').toLowerCase();
+        if (modalidad !== 'vip') {
+          const customId = customIdForFile(rec.id || id);
+          const { data: prow, error: perr } = await supabaseDB
+            .from('paypal_orders')
+            .select('order_id,status')
+            .eq('email', email)
+            .eq('custom_id', customId)
+            .limit(1);
+          if (perr) {
+            console.warn('paypal_orders purchase check error:', perr.message || perr);
+            return res.status(500).json({ error: 'No se pudo verificar el acceso VIP' });
+          }
+          const hasPurchase = Array.isArray(prow) && prow.length > 0 && String(prow[0].status || '').toUpperCase() === 'COMPLETED';
+          if (!hasPurchase) {
+            return res.status(403).json({ error: 'Acceso VIP requerido. Compra el archivo o adquiere la membresía.' });
+          }
+        }
+      }
+    }
 
     // increment downloads (best-effort)
     try {

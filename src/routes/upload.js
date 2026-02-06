@@ -141,11 +141,13 @@ router.post('/upload', upload.fields([
     const epagoInput = (epagoInputRaw === null || typeof epagoInputRaw === 'undefined') ? null : String(epagoInputRaw).trim();
     let tipoFinal = (String(type || '').toLowerCase() === 'vip') ? 'vip' : 'free';
     let epagoToStore = null;
+    let priceUsdToStore = null;
     if (epagoInput) {
       const l = epagoInput.toLowerCase();
       if (l === 'vip') {
         tipoFinal = 'vip';
         epagoToStore = 'vip';
+        priceUsdToStore = 2;
       } else if (l === 'gratuito' || l === 'gratis' || l === 'free') {
         tipoFinal = 'free';
         epagoToStore = epagoInput; // keep original text like 'gratuito'
@@ -153,10 +155,16 @@ router.post('/upload', upload.fields([
         const n = Number(l);
         epagoToStore = n;
         if (n > 0) tipoFinal = 'vip';
+        if (n > 0) priceUsdToStore = n;
       } else {
         // unknown string: preserve as-is but don't force vip
         epagoToStore = epagoInput;
       }
+    }
+
+    // If VIP but no numeric price parsed, default to $2
+    if (tipoFinal === 'vip' && (!Number.isFinite(Number(priceUsdToStore)) || Number(priceUsdToStore) <= 0)) {
+      priceUsdToStore = 2;
     }
 
     // Reglas de subida:
@@ -176,13 +184,25 @@ router.post('/upload', upload.fields([
         categoria: category,
         tipo: tipoFinal,
         epago: epagoToStore,
+        price_usd: (tipoFinal === 'vip') ? Number(priceUsdToStore) : null,
         descripcion: description || null,
         preview_image_url: previewImagePublicUrl,
         preview_video_url: previewVideoPublicUrl,
         supabase_url: htmlPublicUrl,
         file_url: fileUrl
       };
-      const { data: insertData, error: insertError } = await supabaseDB.from('html_files').insert([insertPayload]).select();
+      let { data: insertData, error: insertError } = await supabaseDB.from('html_files').insert([insertPayload]).select();
+      if (insertError) {
+        const msg = String(insertError.message || insertError || '');
+        // If DB hasn't been migrated yet, retry without price_usd
+        if (msg.toLowerCase().includes('price_usd') && msg.toLowerCase().includes('does not exist')) {
+          const retryPayload = { ...insertPayload };
+          delete retryPayload.price_usd;
+          const retry = await supabaseDB.from('html_files').insert([retryPayload]).select();
+          insertData = retry.data;
+          insertError = retry.error;
+        }
+      }
       if (insertError) {
         console.warn('Supabase insert error:', insertError.message || insertError);
         return res.status(500).json({ error: (insertError && insertError.message) || String(insertError) });
@@ -193,7 +213,22 @@ router.post('/upload', upload.fields([
       return res.status(500).json({ error: (e && e.message) || String(e) });
     }
 
-    return res.json({ success: true, data: { id: dbRecord?.id, name, slug, category, type, price: price || null, preview: previewPublicUrl, html: htmlPublicUrl, file: fileUrl, db: dbRecord } });
+    const previewPublicUrl = previewVideoPublicUrl || previewImagePublicUrl || null;
+    return res.json({
+      success: true,
+      data: {
+        id: dbRecord?.id,
+        name,
+        slug,
+        category,
+        type: tipoFinal,
+        price: (tipoFinal === 'vip') ? Number(priceUsdToStore) : null,
+        preview: previewPublicUrl,
+        html: htmlPublicUrl,
+        file: fileUrl,
+        db: dbRecord,
+      },
+    });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'Internal server error' });

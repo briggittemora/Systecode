@@ -10,12 +10,16 @@ router.get('/me', async (req, res) => {
 
     const email = user.email || null;
     let role = null;
+    let modalidad = null;
     if (email) {
       const { row, error: rowErr } = await getUserRowByEmail(email);
-      if (!rowErr && row) role = (row.rol || row.role || null);
+      if (!rowErr && row) {
+        role = (row.rol || row.role || null);
+        modalidad = (row.modalidad || row.membership || null);
+      }
     }
 
-    return res.json({ ok: true, data: { email: user.email, id: user.id, role } });
+    return res.json({ ok: true, data: { email: user.email, id: user.id, role, modalidad } });
   } catch (e) {
     console.error('GET /api/me error:', e?.message || e);
     return res.status(500).json({ error: 'Internal server error' });

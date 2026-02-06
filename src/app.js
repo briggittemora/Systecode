@@ -1,12 +1,16 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const path = require('path');
+const fs = require('fs');
 
 const filesRouter = require('./routes/files');
 const uploadRouter = require('./routes/upload');
 const archivosRouter = require('./routes/archivos');
 const membershipRouter = require('./routes/membership');
 const meRouter = require('./routes/me');
+const purchasesRouter = require('./routes/purchases');
+const guestPurchasesRouter = require('./routes/guestPurchases');
 
 const app = express();
 
@@ -41,10 +45,30 @@ app.use('/api', filesRouter);
 app.use('/api', uploadRouter);
 app.use('/api', membershipRouter);
 app.use('/api', meRouter);
+app.use('/api', purchasesRouter);
+app.use('/api', guestPurchasesRouter);
 app.use('/', archivosRouter);
 
-app.get('/', (req, res) => {
-  res.json({ status: 'ok', message: 'Backend SysteCode' });
-});
+// Serve built frontend (Vite) when available.
+// Prefer dist/ at repo root, fall back to frontend/dist.
+const rootDistPath = path.resolve(__dirname, '..', '..', 'dist');
+const frontendDistPath = path.resolve(__dirname, '..', '..', 'frontend', 'dist');
+const distPath = fs.existsSync(rootDistPath)
+  ? rootDistPath
+  : (fs.existsSync(frontendDistPath) ? frontendDistPath : null);
+
+if (distPath) {
+  app.use(express.static(distPath));
+
+  // SPA fallback: serve index.html for non-API routes.
+  app.get(/^\/(?!api\/).*/, (req, res) => {
+    return res.sendFile(path.join(distPath, 'index.html'));
+  });
+} else {
+  // Dev/diagnostic root response when the frontend build is not present.
+  app.get('/', (req, res) => {
+    res.json({ status: 'ok', message: 'Backend SysteCode' });
+  });
+}
 
 module.exports = app;
