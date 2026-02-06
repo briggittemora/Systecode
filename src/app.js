@@ -11,6 +11,7 @@ const membershipRouter = require('./routes/membership');
 const meRouter = require('./routes/me');
 const purchasesRouter = require('./routes/purchases');
 const guestPurchasesRouter = require('./routes/guestPurchases');
+const profileRouter = require('./routes/profile');
 
 const app = express();
 
@@ -40,15 +41,6 @@ app.use(
   })
 );
 
-// mount routers
-app.use('/api', filesRouter);
-app.use('/api', uploadRouter);
-app.use('/api', membershipRouter);
-app.use('/api', meRouter);
-app.use('/api', purchasesRouter);
-app.use('/api', guestPurchasesRouter);
-app.use('/', archivosRouter);
-
 // Serve built frontend (Vite) when available.
 // Prefer backend/dist, then dist/ at repo root, then frontend/dist.
 const backendDistPath = path.resolve(__dirname, '..', 'dist');
@@ -77,6 +69,15 @@ console.log('[static] frontend/dist:', frontendDistPath, 'exists=', frontendDist
 console.log('[static] frontend/dist/index.html exists=', fs.existsSync(path.join(frontendDistPath, 'index.html')));
 console.log('[static] serving distPath:', distPath || '(none)');
 
+// mount routers
+app.use('/api', filesRouter);
+app.use('/api', uploadRouter);
+app.use('/api', membershipRouter);
+app.use('/api', meRouter);
+app.use('/api', purchasesRouter);
+app.use('/api', guestPurchasesRouter);
+app.use('/api', profileRouter);
+
 if (distPath) {
   app.use(express.static(distPath));
 
@@ -85,6 +86,10 @@ if (distPath) {
     return res.sendFile(path.join(distPath, 'index.html'));
   });
 } else {
+  // If we are NOT serving the SPA, keep the legacy redirect route.
+  // (In production with dist present, /archivos/:slug/:id is handled by the frontend router.)
+  app.use('/', archivosRouter);
+
   // Dev/diagnostic root response when the frontend build is not present.
   app.get('/', (req, res) => {
     res.json({ status: 'ok', message: 'Backend SysteCode' });
