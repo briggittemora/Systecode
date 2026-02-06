@@ -54,11 +54,28 @@ app.use('/', archivosRouter);
 const backendDistPath = path.resolve(__dirname, '..', 'dist');
 const rootDistPath = path.resolve(__dirname, '..', '..', 'dist');
 const frontendDistPath = path.resolve(__dirname, '..', '..', 'frontend', 'dist');
-const distPath = fs.existsSync(backendDistPath)
+
+const backendDistExists = fs.existsSync(backendDistPath);
+const rootDistExists = fs.existsSync(rootDistPath);
+const frontendDistExists = fs.existsSync(frontendDistPath);
+
+const distPath = backendDistExists
   ? backendDistPath
-  : (fs.existsSync(rootDistPath)
+  : (rootDistExists
     ? rootDistPath
-    : (fs.existsSync(frontendDistPath) ? frontendDistPath : null));
+    : (frontendDistExists ? frontendDistPath : null));
+
+// Debug logs to verify which dist path is used (useful in Render).
+console.log('[static] NODE_ENV:', NODE_ENV);
+console.log('[static] cwd:', process.cwd());
+console.log('[static] __dirname:', __dirname);
+console.log('[static] backend/dist:', backendDistPath, 'exists=', backendDistExists);
+console.log('[static] backend/dist/index.html exists=', fs.existsSync(path.join(backendDistPath, 'index.html')));
+console.log('[static] root dist:', rootDistPath, 'exists=', rootDistExists);
+console.log('[static] root dist/index.html exists=', fs.existsSync(path.join(rootDistPath, 'index.html')));
+console.log('[static] frontend/dist:', frontendDistPath, 'exists=', frontendDistExists);
+console.log('[static] frontend/dist/index.html exists=', fs.existsSync(path.join(frontendDistPath, 'index.html')));
+console.log('[static] serving distPath:', distPath || '(none)');
 
 if (distPath) {
   app.use(express.static(distPath));
