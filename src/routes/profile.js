@@ -7,6 +7,18 @@ const router = express.Router();
 const ONLINE_TTL_MS = 60 * 1000;
 const onlineMap = new Map();
 
+const ensureSupabaseConfigured = (res) => {
+  const dbUrl = process.env.SUPABASE_DB_URL || process.env.SUPABASE_URL;
+  const dbKey = process.env.SUPABASE_DB_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!dbUrl || !dbKey) {
+    const msg = 'Supabase DB env not configured (SUPABASE_DB_URL/SUPABASE_DB_SERVICE_ROLE_KEY).';
+    console.error('[profile] ' + msg);
+    res.status(500).json({ error: msg });
+    return false;
+  }
+  return true;
+};
+
 const cleanupOnline = () => {
   const now = Date.now();
   for (const [key, ts] of onlineMap.entries()) {
@@ -52,6 +64,7 @@ router.get('/me/files', async (req, res) => {
   try {
     const user = await getAuthUser(req, res);
     if (!user) return;
+    if (!ensureSupabaseConfigured(res)) return;
 
     const { data, error } = await supabaseDB
       .from('html_files')
@@ -59,7 +72,10 @@ router.get('/me/files', async (req, res) => {
       .eq('user_id', user.id)
       .order('created_at', { ascending: false });
 
-    if (error) return res.status(500).json({ error: error.message || String(error) });
+    if (error) {
+      console.error('[profile] /me/files error:', error);
+      return res.status(500).json({ error: error.message || String(error) });
+    }
 
     const mapped = (data || []).map((rec) => {
       const rawName = rec.name || rec.filename || rec.file_data || '';
@@ -100,13 +116,17 @@ router.get('/me/stats', async (req, res) => {
   try {
     const user = await getAuthUser(req, res);
     if (!user) return;
+    if (!ensureSupabaseConfigured(res)) return;
 
     const { data, error } = await supabaseDB
       .from('html_files')
       .select('id,downloads')
       .eq('user_id', user.id);
 
-    if (error) return res.status(500).json({ error: error.message || String(error) });
+    if (error) {
+      console.error('[profile] /me/stats error:', error);
+      return res.status(500).json({ error: error.message || String(error) });
+    }
 
     const ids = (data || []).map((r) => r.id).filter(Boolean);
     const totalFiles = ids.length;
@@ -114,11 +134,16 @@ router.get('/me/stats', async (req, res) => {
 
     let totalLikes = 0;
     if (ids.length > 0) {
-      const likesRes = await supabaseDB
-        .from('file_likes')
-        .select('file_id', { count: 'exact', head: true })
-        .in('file_id', ids);
-      totalLikes = likesRes?.count || 0;
+      try {
+        const likesRes = await supabaseDB
+          .from('file_likes')
+          .select('file_id', { count: 'exact', head: true })
+          .in('file_id', ids);
+        totalLikes = likesRes?.count || 0;
+      } catch (e) {
+        console.error('[profile] /me/stats likes error:', e?.message || e);
+        totalLikes = 0;
+      }
     }
 
     return res.json({ data: { totalFiles, totalDownloads, totalLikes } });
