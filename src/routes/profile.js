@@ -1,6 +1,6 @@
 const express = require('express');
 const { supabaseDB } = require('../supabaseClient');
-const { getSupabaseUserFromRequest } = require('../utils/supabaseAuth');
+const { getSupabaseUserFromRequest, getUserRowByEmail } = require('../utils/supabaseAuth');
 
 const router = express.Router();
 
@@ -66,10 +66,16 @@ router.get('/me/files', async (req, res) => {
     if (!user) return;
     if (!ensureSupabaseConfigured(res)) return;
 
+    const email = user.email || null;
+    if (!email) return res.json({ data: [] });
+    const { row: dbUser, error: dbUserErr } = await getUserRowByEmail(email);
+    if (dbUserErr || !dbUser || !dbUser.id) return res.json({ data: [] });
+    const dbUserId = dbUser.id;
+
     const { data, error } = await supabaseDB
       .from('html_files')
       .select('*')
-      .eq('user_id', user.id)
+      .eq('user_id', dbUserId)
       .order('created_at', { ascending: false });
 
     if (error) {
@@ -118,10 +124,18 @@ router.get('/me/stats', async (req, res) => {
     if (!user) return;
     if (!ensureSupabaseConfigured(res)) return;
 
+    const email = user.email || null;
+    if (!email) return res.json({ data: { totalFiles: 0, totalDownloads: 0, totalLikes: 0 } });
+    const { row: dbUser, error: dbUserErr } = await getUserRowByEmail(email);
+    if (dbUserErr || !dbUser || !dbUser.id) {
+      return res.json({ data: { totalFiles: 0, totalDownloads: 0, totalLikes: 0 } });
+    }
+    const dbUserId = dbUser.id;
+
     const { data, error } = await supabaseDB
       .from('html_files')
       .select('id,downloads')
-      .eq('user_id', user.id);
+      .eq('user_id', dbUserId);
 
     if (error) {
       console.error('[profile] /me/stats error:', error);
