@@ -18,6 +18,14 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// Simple request logger to help debug missing routes
+app.use((req, res, next) => {
+  try {
+    console.log(`[req] ${new Date().toISOString()} ${req.method} ${req.originalUrl}`);
+  } catch (e) {}
+  next();
+});
+
 const NODE_ENV = process.env.NODE_ENV || 'development';
 const CLIENT_URL_DEV = process.env.CLIENT_URL_DEV || 'http://localhost:3000';
 const CLIENT_URL_PROD = process.env.CLIENT_URL_PROD || null;

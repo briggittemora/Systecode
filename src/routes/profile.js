@@ -36,6 +36,159 @@ const getAuthUser = async (req, res) => {
   return user;
 };
 
+// Endpoint que intenta asegurar que exista una fila en `public.users` para
+// un usuario de Auth. Puede ser llamado desde el frontend después de signUp
+// enviando { email, full_name } en el body. El endpoint intentará resolver el
+// user.id usando la API admin de Supabase (requiere service role key) y luego
+// insertará la fila en `users` si no existe.
+router.post('/create', async (req, res) => {
+  try {
+    const { email, full_name, supabase_user_id } = req.body || {};
+    if (!email) return res.status(400).json({ error: 'missing_email' });
+    if (!ensureSupabaseConfigured(res)) return;
+
+    // Preparar fila: preferimos usar el supabase_user_id si se proporciona
+    // (evita llamadas admin). guardamos nombre en `name` columna.
+    let authUser = null;
+    if (!supabase_user_id) {
+      // Intentar obtener el usuario en Auth mediante la API admin (service role)
+      try {
+        if (supabaseDB && supabaseDB.auth && supabaseDB.auth.admin && typeof supabaseDB.auth.admin.getUserByEmail === 'function') {
+          const adminRes = await supabaseDB.auth.admin.getUserByEmail(email);
+          authUser = adminRes?.data?.user || null;
+        }
+      } catch (e) {
+        console.warn('[profile:create] admin.getUserByEmail error:', e?.message || e);
+        authUser = null;
+      }
+    }
+
+    const row = {
+      email,
+      name: full_name || (authUser?.user_metadata?.full_name || authUser?.email || null),
+      supabase_user_id: supabase_user_id || (authUser?.id || null),
+    };
+
+    try {
+      const { data: upsertData, error: upsertErr } = await supabaseDB
+        .from('users')
+        .upsert([row], { onConflict: 'email' })
+        .select();
+      if (upsertErr) {
+        console.error('[profile:create] upsert error:', upsertErr);
+        return res.status(500).json({ error: upsertErr.message || String(upsertErr) });
+      }
+
+      return res.json({ ok: true, data: upsertData && upsertData[0] ? upsertData[0] : null });
+    } catch (e) {
+      console.error('[profile:create] upsert exception:', e?.message || e);
+      return res.status(500).json({ error: 'upsert_failed' });
+    }
+  } catch (e) {
+    console.error('POST /api/profile/create error:', e?.message || e);
+    return res.status(500).json({ error: 'internal' });
+  }
+});
+
+// POST /api/profile/sync
+// Forzar sincronización: buscar user en Auth (admin API) y hacer upsert en public.users
+router.post('/sync', async (req, res) => {
+  try {
+    const { email } = req.body || {};
+    if (!email) return res.status(400).json({ error: 'missing_email' });
+    if (!ensureSupabaseConfigured(res)) return;
+
+    // Obtener usuario desde Auth con service role
+    let authUser = null;
+    try {
+      if (supabaseDB && supabaseDB.auth && supabaseDB.auth.admin && typeof supabaseDB.auth.admin.getUserByEmail === 'function') {
+        const adminRes = await supabaseDB.auth.admin.getUserByEmail(email);
+        if (adminRes.error) {
+          console.warn('[profile:sync] admin.getUserByEmail returned error:', adminRes.error);
+        }
+        authUser = adminRes?.data?.user || null;
+      } else {
+        console.warn('[profile:sync] admin.getUserByEmail not available on client');
+      }
+    } catch (e) {
+      console.error('[profile:sync] admin lookup exception:', e?.message || e);
+      authUser = null;
+    }
+
+    const row = {
+      email,
+      name: (authUser?.user_metadata?.full_name) || (authUser?.email) || email,
+      supabase_user_id: authUser?.id || null,
+    };
+
+    try {
+      const { data: upsertData, error: upsertErr } = await supabaseDB
+        .from('users')
+        .upsert([row], { onConflict: 'email' })
+        .select();
+      if (upsertErr) {
+        console.error('[profile:sync] upsert error:', upsertErr);
+        return res.status(500).json({ error: upsertErr.message || String(upsertErr) });
+      }
+      return res.json({ ok: true, synced: true, data: upsertData && upsertData[0] ? upsertData[0] : null });
+    } catch (e) {
+      console.error('[profile:sync] upsert exception:', e?.message || e);
+      return res.status(500).json({ error: 'upsert_failed' });
+    }
+  } catch (e) {
+    console.error('POST /api/profile/sync error:', e?.message || e);
+    return res.status(500).json({ error: 'internal' });
+  }
+});
+
+// Compatibilidad: aceptar también POST /api/profile/sync (algunos clientes usan ese path)
+router.post('/profile/sync', async (req, res) => {
+  try {
+    // Reuse the same logic as /sync by delegating: call the /sync handler body here.
+    const { email } = req.body || {};
+    if (!email) return res.status(400).json({ error: 'missing_email' });
+    if (!ensureSupabaseConfigured(res)) return;
+
+    let authUser = null;
+    try {
+      if (supabaseDB && supabaseDB.auth && supabaseDB.auth.admin && typeof supabaseDB.auth.admin.getUserByEmail === 'function') {
+        const adminRes = await supabaseDB.auth.admin.getUserByEmail(email);
+        if (adminRes.error) console.warn('[profile:profile/sync] admin.getUserByEmail returned error:', adminRes.error);
+        authUser = adminRes?.data?.user || null;
+      } else {
+        console.warn('[profile:profile/sync] admin.getUserByEmail not available on client');
+      }
+    } catch (e) {
+      console.error('[profile:profile/sync] admin lookup exception:', e?.message || e);
+      authUser = null;
+    }
+
+    const row = {
+      email,
+      name: (authUser?.user_metadata?.full_name) || (authUser?.email) || email,
+      supabase_user_id: authUser?.id || null,
+    };
+
+    try {
+      const { data: upsertData, error: upsertErr } = await supabaseDB
+        .from('users')
+        .upsert([row], { onConflict: 'email' })
+        .select();
+      if (upsertErr) {
+        console.error('[profile:profile/sync] upsert error:', upsertErr);
+        return res.status(500).json({ error: upsertErr.message || String(upsertErr) });
+      }
+      return res.json({ ok: true, synced: true, data: upsertData && upsertData[0] ? upsertData[0] : null });
+    } catch (e) {
+      console.error('[profile:profile/sync] upsert exception:', e?.message || e);
+      return res.status(500).json({ error: 'upsert_failed' });
+    }
+  } catch (e) {
+    console.error('POST /api/profile/profile/sync error:', e?.message || e);
+    return res.status(500).json({ error: 'internal' });
+  }
+});
+
 const parsePriceUsd = (rec) => {
   if (!rec) return null;
   const p = rec.price_usd !== null && typeof rec.price_usd !== 'undefined' ? Number(rec.price_usd) : null;
