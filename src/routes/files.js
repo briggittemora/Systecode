@@ -2,6 +2,13 @@ const express = require('express');
 const multer = require('multer');
 const { supabaseDB, supabaseStorage, SUPABASE_STORAGE_BUCKET } = require('../supabaseClient');
 const { getSupabaseUserFromRequest, getUserRowByEmail } = require('../utils/supabaseAuth');
+const cloudinary = require('cloudinary').v2;
+
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+});
 
 const router = express.Router();
 
@@ -342,19 +349,44 @@ router.post(
         return null;
       };
 
+      const uploadToCloudinary = async (folder, buffer, originalName, resourceType = 'image') => {
+        return new Promise((resolve, reject) => {
+          // public_id: filename without extension, sanitized
+          const baseName = String(originalName || '').replace(/\.[^.]+$/, '');
+          const publicId = baseName.replace(/[^a-zA-Z0-9-_]/g, '_');
+          const opts = { folder, resource_type: resourceType, public_id: publicId, overwrite: true };
+          const stream = cloudinary.uploader.upload_stream(
+            opts,
+            (err, result) => {
+              if (err) return reject(err);
+              resolve(result && result.secure_url ? result.secure_url : (result && result.url ? result.url : null));
+            }
+          );
+          stream.end(buffer);
+        });
+      };
+
       const updates = {};
       const now = Date.now();
 
       if (previewImageFile) {
-        const path = `previews/${rec.id}_${now}_${previewImageFile.originalname}`;
-        const publicUrl = await uploadToBucket(path, previewImageFile.buffer, previewImageFile.mimetype);
-        updates.preview_image_url = publicUrl;
+        try {
+          const publicUrl = await uploadToCloudinary(`previews`, previewImageFile.buffer, `${rec.id}_${now}_${previewImageFile.originalname}`, 'image');
+          updates.preview_image_url = publicUrl;
+        } catch (e) {
+          console.warn('Cloudinary preview image upload failed:', e?.message || e);
+          return res.status(500).json({ error: 'No se pudo subir la imagen de preview' });
+        }
       }
 
       if (previewVideoFile) {
-        const path = `previews/${rec.id}_${now}_${previewVideoFile.originalname}`;
-        const publicUrl = await uploadToBucket(path, previewVideoFile.buffer, previewVideoFile.mimetype);
-        updates.preview_video_url = publicUrl;
+        try {
+          const publicUrl = await uploadToCloudinary(`previews`, previewVideoFile.buffer, `${rec.id}_${now}_${previewVideoFile.originalname}`, 'video');
+          updates.preview_video_url = publicUrl;
+        } catch (e) {
+          console.warn('Cloudinary preview video upload failed:', e?.message || e);
+          return res.status(500).json({ error: 'No se pudo subir el video de preview' });
+        }
       }
 
       if (htmlFile) {
