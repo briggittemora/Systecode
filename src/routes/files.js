@@ -3,6 +3,7 @@ const multer = require('multer');
 const { supabaseDB, supabaseStorage, SUPABASE_STORAGE_BUCKET } = require('../supabaseClient');
 const { getSupabaseUserFromRequest, getUserRowByEmail } = require('../utils/supabaseAuth');
 const cloudinary = require('cloudinary').v2;
+const { Octokit } = require('@octokit/rest');
 
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
@@ -400,11 +401,98 @@ router.post(
       if (upErr) return res.status(500).json({ error: upErr.message || String(upErr) });
       return res.json({ success: true, data: up && up[0] });
     } catch (e) {
-      console.error('Assets endpoint error:', e);
-      return res.status(500).json({ error: 'Internal server error' });
+      console.error('Assets endpoint error:', e && e.stack ? e.stack : e);
+      const msg = (e && (e.message || e.toString())) || 'Internal server error';
+      return res.status(500).json({ error: msg });
     }
   }
 );
+
+// POST /api/file/:id/publish -> commit HTML to GitHub Pages branch and return public URL
+router.post('/file/:id/publish', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { html } = req.body || {};
+    if (!html) return res.status(400).json({ error: 'Missing html in body' });
+
+    const { user } = await require('../utils/supabaseAuth').getSupabaseUserFromRequest(req);
+    if (!user) return res.status(401).json({ error: 'No autorizado' });
+
+    const rec = await tryFindFileByIdOrSlug(id);
+    if (!rec) return res.status(404).json({ error: 'Not found' });
+
+    const { row: dbUser } = await require('../utils/supabaseAuth').getUserRowByEmail(user.email);
+    const role = String(dbUser?.rol || '').toLowerCase();
+    const isOwner = rec.user_id && user.id && String(rec.user_id) === String(user.id);
+    if (!isOwner && role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
+
+    // Support both legacy GITHUB_* names and existing GHPAGES_* names in .env
+    const GH_OWNER = process.env.GHPAGES_OWNER || process.env.GITHUB_PAGES_REPO_OWNER || process.env.GH_PAGES_OWNER;
+    const GH_REPO = process.env.GHPAGES_REPO || process.env.GITHUB_PAGES_REPO_NAME || process.env.GH_PAGES_REPO;
+    const GH_TOKEN = process.env.GHPAGES_TOKEN || process.env.GITHUB_TOKEN || process.env.GITHUB_PAGES_TOKEN || process.env.GH_PAGES_TOKEN;
+    if (!GH_OWNER || !GH_REPO || !GH_TOKEN) return res.status(500).json({ error: 'GitHub Pages not configured on server' });
+
+    const octokit = new Octokit({ auth: GH_TOKEN });
+
+    // target branch for pages (support GHPAGES_BRANCH or GITHUB_PAGES_BRANCH)
+    const branch = process.env.GHPAGES_BRANCH || process.env.GITHUB_PAGES_BRANCH || 'gh-pages';
+    const filenameSafe = String(rec.name || rec.filename || `file-${rec.id}`).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+    const path = `${String(rec.id)}-${filenameSafe}.html`;
+
+    // ensure branch exists; if not, create from default branch
+    let branchSha = null;
+    try {
+      const ref = await octokit.rest.git.getRef({ owner: GH_OWNER, repo: GH_REPO, ref: `heads/${branch}` });
+      branchSha = ref.data.object.sha;
+    } catch (e) {
+      // create branch from default
+      const repoInfo = await octokit.rest.repos.get({ owner: GH_OWNER, repo: GH_REPO });
+      const defaultBranch = repoInfo.data.default_branch;
+      const commit = await octokit.rest.repos.getCommit({ owner: GH_OWNER, repo: GH_REPO, ref: defaultBranch });
+      const baseSha = commit.data.sha;
+      await octokit.rest.git.createRef({ owner: GH_OWNER, repo: GH_REPO, ref: `refs/heads/${branch}`, sha: baseSha });
+      branchSha = baseSha;
+    }
+
+    // prepare content
+    const contentB64 = Buffer.from(html, 'utf8').toString('base64');
+
+    // try to get existing file to use sha for update
+    let existingSha = null;
+    try {
+      const getRes = await octokit.rest.repos.getContent({ owner: GH_OWNER, repo: GH_REPO, path, ref: branch });
+      if (getRes && getRes.data && getRes.data.sha) existingSha = getRes.data.sha;
+    } catch (e) {
+      // not found -> create
+    }
+
+    const msg = `Publish file ${rec.id} via app`;
+    if (existingSha) {
+      await octokit.rest.repos.createOrUpdateFileContents({ owner: GH_OWNER, repo: GH_REPO, path, message: msg, content: contentB64, branch, sha: existingSha });
+    } else {
+      await octokit.rest.repos.createOrUpdateFileContents({ owner: GH_OWNER, repo: GH_REPO, path, message: msg, content: contentB64, branch });
+    }
+
+    // construct public URL. Prefer explicit base if provided (GHPAGES_BASE_URL)
+    let publicUrl = null;
+    const baseUrl = (process.env.GHPAGES_BASE_URL || process.env.GITHUB_PAGES_BASE_URL || '').toString().trim();
+    if (baseUrl) {
+      publicUrl = `${baseUrl.replace(/\/$/, '')}/${path}`;
+    } else {
+      // If repo is owner.github.io then path served at /<path>
+      if (`${GH_REPO}`.toLowerCase() === `${GH_OWNER.toLowerCase()}.github.io`) {
+        publicUrl = `https://${GH_OWNER}.github.io/${path}`;
+      } else {
+        publicUrl = `https://${GH_OWNER}.github.io/${GH_REPO}/${path}`;
+      }
+    }
+
+    return res.json({ data: { url: publicUrl } });
+  } catch (e) {
+    console.error('Publish endpoint error:', e);
+    return res.status(500).json({ error: (e && e.message) || 'Publish failed' });
+  }
+});
 
 // DELETE /api/file/:id -> delete file (only owner or admin)
 router.delete('/file/:id', async (req, res) => {

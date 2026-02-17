@@ -1,0 +1,6 @@
+{
+  "code": "<h1 id=\"question\">Pregunta vieja</h1>\n<p>Texto de ejemplo</p>",
+  "instructions": "cambia la pregunta por \"Persistida ahora\"",
+  "filePath": "backend/src/test-output/example.html",
+  "persist": true
+}

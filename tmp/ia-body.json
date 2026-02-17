@@ -1,0 +1,6 @@
+{
+  "code": "<h1 id=\"question\">Pregunta vieja</h1>\n<p>Texto de ejemplo</p>",
+  "instructions": "cambia la pregunta por \"Nueva pregunta desde curl\"",
+  "filePath": "src/test-output/example.html",
+  "persist": true
+}
