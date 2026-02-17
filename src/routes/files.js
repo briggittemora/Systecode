@@ -144,7 +144,12 @@ router.get('/files', async (req, res) => {
 
     return res.json({ data: mapped });
   } catch (e) {
-    console.error(e);
+    console.error('[PUT /api/file/:id] error:', e && (e.stack || e.message || e));
+    const isProd = (process.env.NODE_ENV || '').toLowerCase() === 'production';
+    const msg = (e && (e.message || String(e))) || 'Internal server error';
+    if (!isProd) {
+      return res.status(500).json({ error: msg, stack: e && e.stack ? e.stack.split('\n').slice(0,10).join('\n') : null });
+    }
     return res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -271,7 +276,7 @@ router.put('/file/:id', async (req, res) => {
     if (!isOwner && role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
 
     const allowed = {};
-    const { name, description, category, tipo, epago } = req.body;
+    const { name, description, category, tipo, epago, preview_url, preview_image_url, preview_video_url } = req.body || {};
 
     // Only admin can set/modify VIP-related fields (tipo/epago).
     // This prevents non-admins from turning a free file into VIP via edit.
@@ -283,11 +288,40 @@ router.put('/file/:id', async (req, res) => {
       const wantsVip = (tipoReq === 'vip') || (epagoStr === 'vip') || (epagoNum !== null && epagoNum > 0);
       if (wantsVip && role !== 'admin') return res.status(403).json({ error: 'Solo un admin puede marcar un archivo como VIP.' });
     }
+
+    // Validate video preview URL: only VIP files (or admin) can set a preview video URL
+    const rawEpago = (rec && typeof rec.epago !== 'undefined' && rec.epago !== null) ? String(rec.epago).trim().toLowerCase() : '';
+    const epagoNumExisting = rawEpago && !isNaN(Number(rawEpago)) ? Number(rawEpago) : null;
+    const isVipFile = String(rec.tipo || '').toLowerCase() === 'vip' || rawEpago === 'vip' || (epagoNumExisting !== null && epagoNumExisting > 0);
+    if (typeof preview_video_url !== 'undefined' && preview_video_url !== null && preview_video_url !== '') {
+      if (!isVipFile && role !== 'admin') {
+        return res.status(403).json({ error: 'Solo archivos VIP (o admin) pueden tener preview en video.' });
+      }
+    }
+
     if (typeof name !== 'undefined') allowed.filename = name;
     if (typeof description !== 'undefined') allowed.descripcion = description;
     if (typeof category !== 'undefined') allowed.categoria = category;
     if (typeof tipo !== 'undefined') allowed.tipo = tipo;
     if (typeof epago !== 'undefined') allowed.epago = epago;
+
+    // Allow setting preview URLs directly from the edit form
+    // Note: there is no `preview` DB column; map `preview_url` to image or video columns.
+    if (typeof preview_image_url !== 'undefined') {
+      allowed.preview_image_url = preview_image_url || null;
+    }
+    if (typeof preview_video_url !== 'undefined') {
+      allowed.preview_video_url = preview_video_url || null;
+    }
+    if (typeof preview_url !== 'undefined' && (typeof preview_image_url === 'undefined' && typeof preview_video_url === 'undefined')) {
+      // Guess type by file extension in the URL (basic heuristic)
+      const urlLower = String(preview_url || '').toLowerCase();
+      if (urlLower.match(/\.(mp4|webm|mov|ogg|m4v|avi)(\?|$)/)) {
+        allowed.preview_video_url = preview_url || null;
+      } else {
+        allowed.preview_image_url = preview_url || null;
+      }
+    }
 
     const { data: up, error: upErr } = await supabaseDB.from('html_files').update(allowed).eq('id', rec.id).select();
     if (upErr) return res.status(500).json({ error: upErr.message || String(upErr) });
