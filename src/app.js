@@ -13,6 +13,7 @@ const purchasesRouter = require('./routes/purchases');
 const guestPurchasesRouter = require('./routes/guestPurchases');
 const profileRouter = require('./routes/profile');
 const configRouter = require('./routes/config');
+const ensureUserRouter = require('./routes/ensureUser');
 
 const app = express();
 
@@ -87,6 +88,7 @@ app.use('/api', purchasesRouter);
 app.use('/api', guestPurchasesRouter);
 app.use('/api/profile', profileRouter);
 app.use('/api', configRouter);
+app.use('/api', ensureUserRouter);
 
 if (distPath) {
   app.use(express.static(distPath));
