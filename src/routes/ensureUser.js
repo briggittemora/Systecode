@@ -21,8 +21,19 @@ const supabaseAdmin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
 // Validates the token with Supabase auth endpoint and upserts a row in public.users
 router.post('/ensure-user', async (req, res) => {
   try {
-    const { access_token } = req.body || {};
-    if (!access_token) return res.status(400).json({ error: 'missing access_token' });
+    // Accept token from JSON body or from Authorization header (Bearer)
+    let { access_token } = req.body || {};
+    if (!access_token) {
+      const auth = req.headers.authorization || req.headers.Authorization || '';
+      if (auth && auth.toLowerCase().startsWith('bearer ')) {
+        access_token = auth.split(' ')[1];
+      }
+    }
+
+    if (!access_token) {
+      console.warn('[ensure-user] missing access_token from body or Authorization header');
+      return res.status(400).json({ error: 'missing access_token' });
+    }
 
     // Validate token and get user info from Supabase Auth
     const resp = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
@@ -36,6 +47,7 @@ router.post('/ensure-user', async (req, res) => {
     }
 
     const user = await resp.json();
+    console.log('[ensure-user] validated user id=', user?.id ? user.id : '(none)');
     if (!user || !user.id) return res.status(401).json({ error: 'invalid user' });
 
     // Build payload with safe defaults; only keep allowed fields
@@ -60,3 +72,46 @@ router.post('/ensure-user', async (req, res) => {
 });
 
 module.exports = router;
+
+// --- Development / test helper: POST /api/ensure-user/test
+// Body: { supabase_user_id, email, full_name, secret }
+// Allowed when NODE_ENV !== 'production' OR when secret matches ENSURE_USER_TEST_SECRET
+router.post('/ensure-user/test', async (req, res) => {
+  try {
+    const { supabase_user_id, email, full_name, secret } = req.body || {};
+    const allowedInDev = process.env.NODE_ENV !== 'production';
+    const configuredSecret = process.env.ENSURE_USER_TEST_SECRET;
+    if (!allowedInDev && (!configuredSecret || secret !== configuredSecret)) {
+      return res.status(403).json({ error: 'forbidden' });
+    }
+
+    if (!supabase_user_id && !email) {
+      return res.status(400).json({ error: 'missing supabase_user_id or email' });
+    }
+
+    const payload = {
+      id: supabase_user_id || null,
+      email: email || null,
+      modalidad: 'gratuita',
+      rol: 'miembro',
+    };
+
+    // If no explicit id provided, generate a deterministic placeholder id using email
+    if (!payload.id && payload.email) {
+      // Use simple hash fallback to avoid inserting null id (Supabase requires id)
+      const hash = require('crypto').createHash('sha256').update(payload.email).digest('hex').slice(0, 20);
+      payload.id = `debug-${hash}`;
+    }
+
+    const { error } = await supabaseAdmin.from('users').upsert(payload, { onConflict: 'id' });
+    if (error) {
+      console.error('[ensure-user:test] upsert error', error);
+      return res.status(500).json({ error: 'db_error', details: error });
+    }
+
+    return res.json({ ok: true, id: payload.id });
+  } catch (err) {
+    console.error('[ensure-user:test] unexpected', err);
+    return res.status(500).json({ error: 'unexpected', details: String(err) });
+  }
+});
