@@ -528,6 +528,55 @@ router.post('/file/:id/publish', async (req, res) => {
   }
 });
 
+// POST /api/file/:id/upload-audio-github -> upload an mp3 to the configured GitHub repo and return raw URL
+router.post('/file/:id/upload-audio-github', upload.single('audioFile'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const audioFile = req.file;
+    if (!audioFile) return res.status(400).json({ error: 'missing_file' });
+
+    // require GitHub config similar to publish endpoint
+    const GH_OWNER = process.env.GHPAGES_OWNER || process.env.GITHUB_PAGES_REPO_OWNER || process.env.GH_PAGES_OWNER;
+    const GH_REPO = process.env.GHPAGES_REPO || process.env.GITHUB_PAGES_REPO_NAME || process.env.GH_PAGES_REPO;
+    const GH_TOKEN = process.env.GHPAGES_TOKEN || process.env.GITHUB_TOKEN || process.env.GITHUB_PAGES_TOKEN || process.env.GH_PAGES_TOKEN;
+    if (!GH_OWNER || !GH_REPO || !GH_TOKEN) return res.status(500).json({ error: 'GitHub not configured on server' });
+
+    const { Octokit } = require('@octokit/rest');
+    const octokit = new Octokit({ auth: GH_TOKEN });
+
+    const branch = process.env.GHPAGES_BRANCH || process.env.GITHUB_PAGES_BRANCH || 'gh-pages';
+    const safeName = String(audioFile.originalname || `audio-${id}.mp3`).replace(/[^a-zA-Z0-9._-]/g, '_');
+    const path = `assets/audio/${String(id)}_${Date.now()}_${safeName}`;
+
+    // prepare base64
+    const contentB64 = Buffer.from(audioFile.buffer).toString('base64');
+
+    // try to get existing file to retrieve sha (unlikely) — ignore errors
+    let existingSha = null;
+    try {
+      const getRes = await octokit.rest.repos.getContent({ owner: GH_OWNER, repo: GH_REPO, path, ref: branch });
+      if (getRes && getRes.data && getRes.data.sha) existingSha = getRes.data.sha;
+    } catch (e) {
+      // ignore — create new file
+    }
+
+    const msg = `Upload audio for file ${id}`;
+    if (existingSha) {
+      await octokit.rest.repos.createOrUpdateFileContents({ owner: GH_OWNER, repo: GH_REPO, path, message: msg, content: contentB64, branch, sha: existingSha });
+    } else {
+      await octokit.rest.repos.createOrUpdateFileContents({ owner: GH_OWNER, repo: GH_REPO, path, message: msg, content: contentB64, branch });
+    }
+
+    // construct raw URL
+    const rawUrl = `https://raw.githubusercontent.com/${GH_OWNER}/${GH_REPO}/${branch}/${path}`;
+
+    return res.json({ ok: true, data: { rawUrl } });
+  } catch (e) {
+    console.error('POST /api/file/:id/upload-audio-github error:', e && (e.stack || e.message || e));
+    return res.status(500).json({ error: 'upload_failed' });
+  }
+});
+
 // DELETE /api/file/:id -> delete file (only owner or admin)
 router.delete('/file/:id', async (req, res) => {
   try {

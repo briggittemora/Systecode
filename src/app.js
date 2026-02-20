@@ -12,7 +12,7 @@ const meRouter = require('./routes/me');
 const purchasesRouter = require('./routes/purchases');
 const guestPurchasesRouter = require('./routes/guestPurchases');
 const profileRouter = require('./routes/profile');
-const iaRouter = require('./routes/ia');
+const configRouter = require('./routes/config');
 
 const app = express();
 
@@ -86,7 +86,7 @@ app.use('/api', meRouter);
 app.use('/api', purchasesRouter);
 app.use('/api', guestPurchasesRouter);
 app.use('/api/profile', profileRouter);
-app.use('/api', iaRouter);
+app.use('/api', configRouter);
 
 if (distPath) {
   app.use(express.static(distPath));
