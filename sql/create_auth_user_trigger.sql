@@ -13,11 +13,14 @@
 CREATE OR REPLACE FUNCTION public.handle_new_auth_user()
 RETURNS trigger
 LANGUAGE plpgsql
+SECURITY DEFINER
 AS $$
 DECLARE
   target_table_exists boolean;
   inferred_full_name text;
 BEGIN
+  -- Ejecutar con search_path seguro (asegura que public.users sea accesible)
+  PERFORM set_config('search_path', 'public', true);
   -- Verificar si existe la tabla destino
   SELECT EXISTS (
     SELECT 1 FROM information_schema.tables
