@@ -18,6 +18,7 @@ AS $$
 DECLARE
   target_table_exists boolean;
   inferred_full_name text;
+  inferred_name text;
 BEGIN
   -- Ejecutar con search_path seguro (asegura que public.users sea accesible)
   PERFORM set_config('search_path', 'public', true);
@@ -32,19 +33,53 @@ BEGIN
     RETURN NEW;
   END IF;
 
-  -- Extraer nombre completo desde metadata (intenta varios campos comunes)
+  -- Extraer nombre desde metadata (intenta varios campos comunes)
+  inferred_name := COALESCE(
+    NULLIF(NEW.raw_user_meta_data->> 'name', ''),
+    NULLIF(NEW.raw_user_meta_data->> 'full_name', ''),
+    NULLIF(NEW.raw_user_meta_data->> 'fullName', ''),
+    NULLIF(NEW.raw_user_meta_data->> 'nickname', ''),
+    NULLIF(split_part(NEW.email, '@', 1), ''),
+    'usuario'
+  );
+
+  -- full_name puede ir igual que name si no viene explícito
   inferred_full_name := COALESCE(
     NULLIF(NEW.raw_user_meta_data->> 'full_name', ''),
-    NULLIF(NEW.user_metadata->> 'full_name', ''),
     NULLIF(NEW.raw_user_meta_data->> 'fullName', ''),
-    NULLIF(NEW.user_metadata->> 'fullName', ''),
-    NULLIF(NEW.email, '')
+    inferred_name
   );
 
   BEGIN
-    INSERT INTO public.users (id, email, full_name, created_at)
-    VALUES (NEW.id, NEW.email, inferred_full_name, now())
-    ON CONFLICT (id) DO NOTHING;
+    INSERT INTO public.users (
+      id,
+      email,
+      name,
+      full_name,
+      created_at,
+      updated_at,
+      modalidad,
+      rol,
+      role,
+      supabase_user_id
+    )
+    VALUES (
+      NEW.id,
+      NEW.email,
+      inferred_name,
+      inferred_full_name,
+      now(),
+      now(),
+      'gratuita',
+      'miembro',
+      'miembro',
+      NEW.id::text
+    )
+    ON CONFLICT (id) DO UPDATE
+      SET email = EXCLUDED.email,
+          name = COALESCE(public.users.name, EXCLUDED.name),
+          full_name = COALESCE(public.users.full_name, EXCLUDED.full_name),
+          updated_at = now();
   EXCEPTION WHEN others THEN
     -- Evitar que errores menores rompan el proceso de auth
     RAISE NOTICE 'No se pudo insertar en public.users: %', SQLERRM;

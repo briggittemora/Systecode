@@ -6,6 +6,7 @@ const router = express.Router();
 
 const ONLINE_TTL_MS = 60 * 1000;
 const onlineMap = new Map();
+const onlineStreams = new Set();
 
 const ensureSupabaseConfigured = (res) => {
   const dbUrl = process.env.SUPABASE_DB_URL || process.env.SUPABASE_URL;
@@ -25,6 +26,37 @@ const cleanupOnline = () => {
     if (now - ts.ts > ONLINE_TTL_MS) onlineMap.delete(key);
   }
   return onlineMap.size;
+};
+
+const getOnlineUsersPayload = () => {
+  cleanupOnline();
+  const entries = Array.from(onlineMap.values())
+    .sort((a, b) => b.ts - a.ts);
+
+  let anonIndex = 1;
+  const users = entries.map((item) => {
+    if (!item || item.isAnon) {
+      const label = `Anonimo ${anonIndex}`;
+      anonIndex += 1;
+      return { name: label, isAnon: true };
+    }
+    return { name: item.name || 'Usuario', isAnon: false };
+  });
+
+  return { count: users.length, users };
+};
+
+const sendSseEvent = (res, event, payload) => {
+  res.write(`event: ${event}\n`);
+  res.write(`data: ${JSON.stringify(payload)}\n\n`);
+};
+
+const broadcastOnlineUsers = () => {
+  if (onlineStreams.size === 0) return;
+  const payload = getOnlineUsersPayload();
+  for (const stream of onlineStreams) {
+    sendSseEvent(stream, 'online-users', payload);
+  }
 };
 
 const getAuthUser = async (req, res) => {
@@ -355,6 +387,7 @@ router.post('/online-users/ping', async (req, res) => {
       isAnon,
     });
     const count = cleanupOnline();
+    broadcastOnlineUsers();
 
     return res.json({ ok: true, data: { count } });
   } catch (e) {
@@ -365,23 +398,44 @@ router.post('/online-users/ping', async (req, res) => {
 
 router.get('/online-users', async (_req, res) => {
   try {
-    cleanupOnline();
-    const entries = Array.from(onlineMap.values())
-      .sort((a, b) => b.ts - a.ts);
-
-    let anonIndex = 1;
-    const users = entries.map((item) => {
-      if (!item || item.isAnon) {
-        const label = `Anonimo ${anonIndex}`;
-        anonIndex += 1;
-        return { name: label, isAnon: true };
-      }
-      return { name: item.name || 'Usuario', isAnon: false };
-    });
-
-    return res.json({ ok: true, data: { count: users.length, users } });
+    const payload = getOnlineUsersPayload();
+    return res.json({ ok: true, data: payload });
   } catch (e) {
     console.error('GET /api/online-users error:', e?.message || e);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.get('/online-users/stream', async (req, res) => {
+  try {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders?.();
+
+    onlineStreams.add(res);
+    sendSseEvent(res, 'online-users', getOnlineUsersPayload());
+
+    const keepAlive = setInterval(() => {
+      try {
+        res.write(': ping\n\n');
+      } catch {
+        // connection closed
+      }
+    }, 25000);
+
+    req.on('close', () => {
+      clearInterval(keepAlive);
+      onlineStreams.delete(res);
+      try {
+        res.end();
+      } catch {
+        // ignore
+      }
+    });
+  } catch (e) {
+    console.error('GET /api/online-users/stream error:', e?.message || e);
     return res.status(500).json({ error: 'Internal server error' });
   }
 });

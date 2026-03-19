@@ -44,6 +44,186 @@ const isVipFileRecord = (rec) => {
 
 const customIdForFile = (fileId) => `vip-file-${String(fileId)}`;
 
+const normalizeText = (v) => {
+  if (v === null || typeof v === 'undefined') return null;
+  const s = String(v).trim();
+  return s.length ? s : null;
+};
+
+const normalizeEmail = (v) => {
+  const s = normalizeText(v);
+  return s ? s.toLowerCase() : null;
+};
+
+const getLegacyUserIdCandidates = (rec) => {
+  const keys = [
+    'user_id',
+    'supabase_user_id',
+    'uploaded_by',
+    'owner_id',
+    'author_id',
+    'creator_id',
+  ];
+  const out = [];
+  for (const k of keys) {
+    const v = normalizeText(rec?.[k]);
+    if (v) out.push(v);
+  }
+  return Array.from(new Set(out));
+};
+
+const getLegacyEmailCandidates = (rec) => {
+  const keys = [
+    'email',
+    'user_email',
+    'uploader_email',
+    'uploaded_by_email',
+    'author_email',
+    'creator_email',
+  ];
+  const out = [];
+  for (const k of keys) {
+    const v = normalizeEmail(rec?.[k]);
+    if (v) out.push(v);
+  }
+  return Array.from(new Set(out));
+};
+
+const toUploaderDto = (u) => ({
+  id: u.id,
+  email: u.email || null,
+  name: u.name || u.full_name || u.username || null,
+  role: u.rol || u.role || null,
+});
+
+const toAuthUploaderDto = (authUser) => ({
+  id: authUser?.id || null,
+  email: authUser?.email || null,
+  name:
+    authUser?.user_metadata?.full_name ||
+    authUser?.user_metadata?.name ||
+    authUser?.email ||
+    null,
+  role: null,
+});
+
+async function getAuthUserById(id) {
+  const sid = normalizeText(id);
+  if (!sid) return null;
+  try {
+    if (!supabaseDB?.auth?.admin || typeof supabaseDB.auth.admin.getUserById !== 'function') return null;
+    const result = await supabaseDB.auth.admin.getUserById(sid);
+    if (result?.error || !result?.data?.user) return null;
+    return result.data.user;
+  } catch {
+    return null;
+  }
+}
+
+async function buildUploaderResolver(records) {
+  const byId = {};
+  const bySupabaseId = {};
+  const byEmail = {};
+  const authById = {};
+
+  const idCandidates = Array.from(new Set((records || []).flatMap(getLegacyUserIdCandidates).filter(Boolean)));
+  const emailCandidates = Array.from(new Set((records || []).flatMap(getLegacyEmailCandidates).filter(Boolean)));
+
+  const loadByIdChunk = async (chunk) => {
+    const { data: urows, error: uerr } = await supabaseDB
+      .from('users')
+      .select('*')
+      .in('id', chunk);
+    if (!uerr && Array.isArray(urows)) {
+      for (const u of urows) {
+        const dto = toUploaderDto(u);
+        byId[String(u.id)] = dto;
+        const sid = normalizeText(u.supabase_user_id);
+        if (sid) bySupabaseId[sid] = dto;
+        const em = normalizeEmail(u.email);
+        if (em) byEmail[em] = dto;
+      }
+    }
+  };
+
+  const loadBySupabaseIdChunk = async (chunk) => {
+    const { data: urows, error: uerr } = await supabaseDB
+      .from('users')
+      .select('*')
+      .in('supabase_user_id', chunk);
+    if (!uerr && Array.isArray(urows)) {
+      for (const u of urows) {
+        const dto = toUploaderDto(u);
+        byId[String(u.id)] = dto;
+        const sid = normalizeText(u.supabase_user_id);
+        if (sid) bySupabaseId[sid] = dto;
+        const em = normalizeEmail(u.email);
+        if (em) byEmail[em] = dto;
+      }
+    }
+  };
+
+  const loadByEmailChunk = async (chunk) => {
+    const { data: urows, error: uerr } = await supabaseDB
+      .from('users')
+      .select('*')
+      .in('email', chunk);
+    if (!uerr && Array.isArray(urows)) {
+      for (const u of urows) {
+        const dto = toUploaderDto(u);
+        byId[String(u.id)] = dto;
+        const sid = normalizeText(u.supabase_user_id);
+        if (sid) bySupabaseId[sid] = dto;
+        const em = normalizeEmail(u.email);
+        if (em) byEmail[em] = dto;
+      }
+    }
+  };
+
+  // Supabase IN can fail with very large arrays, so chunk requests.
+  const chunkSize = 100;
+  for (let i = 0; i < idCandidates.length; i += chunkSize) {
+    const chunk = idCandidates.slice(i, i + chunkSize);
+    await loadByIdChunk(chunk);
+  }
+  for (let i = 0; i < idCandidates.length; i += chunkSize) {
+    const chunk = idCandidates.slice(i, i + chunkSize);
+    await loadBySupabaseIdChunk(chunk);
+  }
+  for (let i = 0; i < emailCandidates.length; i += chunkSize) {
+    const chunk = emailCandidates.slice(i, i + chunkSize);
+    await loadByEmailChunk(chunk);
+  }
+
+  // Fallback for legacy rows: if uploader not in users table, try Supabase Auth by user id.
+  const unresolvedIds = idCandidates.filter((id) => !byId[id] && !bySupabaseId[id]);
+  for (const id of unresolvedIds) {
+    const authUser = await getAuthUserById(id);
+    if (!authUser) continue;
+    const dto = toAuthUploaderDto(authUser);
+    if (!dto?.id) continue;
+
+    authById[String(dto.id)] = dto;
+    bySupabaseId[String(dto.id)] = dto;
+    const em = normalizeEmail(dto.email);
+    if (em) byEmail[em] = dto;
+  }
+
+  return (rec) => {
+    const ids = getLegacyUserIdCandidates(rec);
+    for (const id of ids) {
+      if (byId[id]) return byId[id];
+      if (bySupabaseId[id]) return bySupabaseId[id];
+      if (authById[id]) return authById[id];
+    }
+    const emails = getLegacyEmailCandidates(rec);
+    for (const em of emails) {
+      if (byEmail[em]) return byEmail[em];
+    }
+    return null;
+  };
+}
+
 // GET /api/files
 router.get('/files', async (req, res) => {
   try {
@@ -84,29 +264,12 @@ router.get('/files', async (req, res) => {
       }
     }
 
-    // build uploader map for these files (html_files.user_id -> users.*)
-    const userIds = Array.from(new Set((data || []).map((r) => r.user_id).filter(Boolean)));
-    let uploaderMap = {};
-    if (userIds.length > 0) {
-      try {
-        const { data: urows, error: uerr } = await supabaseDB
-          .from('users')
-          .select('id, email, name, rol')
-          .in('id', userIds);
-        if (!uerr && Array.isArray(urows)) {
-          for (const u of urows) {
-            const displayName = u.name || null;
-            uploaderMap[u.id] = {
-              id: u.id,
-              email: u.email || null,
-              name: displayName,
-              role: u.rol || null,
-            };
-          }
-        }
-      } catch (e) {
-        // ignore uploader failures
-      }
+    // Resolve uploader robustly for legacy rows too (id/supabase_user_id/email).
+    let resolveUploader = () => null;
+    try {
+      resolveUploader = await buildUploaderResolver(data || []);
+    } catch (e) {
+      // ignore uploader failures
     }
 
     // Map DB columns to frontend expected fields
@@ -138,7 +301,7 @@ router.get('/files', async (req, res) => {
         downloads: rec.downloads || 0,
         likes: likesCountMap[rec.id] || 0,
         raw: rec,
-        uploader: (rec.user_id && uploaderMap[rec.user_id]) ? uploaderMap[rec.user_id] : null,
+        uploader: resolveUploader(rec),
       };
     });
 
@@ -230,24 +393,10 @@ router.get('/file/:id', async (req, res) => {
       const { data: likeRows, error: likeErr } = await supabaseDB.from('file_likes').select('file_id').eq('file_id', rec.id);
       if (!likeErr && Array.isArray(likeRows)) mapped.likes = likeRows.length;
     } catch (e) {}
-    // include uploader info if available
+    // include uploader info with legacy fallbacks (id/supabase_user_id/email)
     try {
-      if (rec.user_id) {
-        const { data: urows, error: uerr } = await supabaseDB
-          .from('users')
-          .select('id, email, name, rol')
-          .eq('id', rec.user_id)
-          .limit(1);
-        if (!uerr && urows && urows.length) {
-          const u = urows[0];
-          mapped.uploader = {
-            id: u.id,
-            email: u.email || null,
-            name: u.name || null,
-            role: u.rol || null,
-          };
-        }
-      }
+      const resolveUploader = await buildUploaderResolver([rec]);
+      mapped.uploader = resolveUploader(rec);
     } catch (e) {
       // ignore
     }

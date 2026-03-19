@@ -1,6 +1,5 @@
 require('dotenv').config();
 const express = require('express');
-const fetch = global.fetch || require('node-fetch');
 const { createClient } = require('@supabase/supabase-js');
 
 const router = express.Router();
@@ -35,18 +34,14 @@ router.post('/ensure-user', async (req, res) => {
       return res.status(400).json({ error: 'missing access_token' });
     }
 
-    // Validate token and get user info from Supabase Auth
-    const resp = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
-      headers: { Authorization: `Bearer ${access_token}` },
-    });
-
-    if (!resp.ok) {
-      const text = await resp.text();
-      console.warn('[ensure-user] auth/v1/user returned', resp.status, text);
+    // Validate token with Supabase SDK (handles proper auth request details)
+    const { data: authData, error: authError } = await supabaseAdmin.auth.getUser(access_token);
+    if (authError) {
+      console.warn('[ensure-user] auth.getUser failed', authError.message || authError);
       return res.status(401).json({ error: 'invalid token' });
     }
 
-    const user = await resp.json();
+    const user = authData?.user || null;
     console.log('[ensure-user] validated user id=', user?.id ? user.id : '(none)');
     if (!user || !user.id) return res.status(401).json({ error: 'invalid user' });
 
