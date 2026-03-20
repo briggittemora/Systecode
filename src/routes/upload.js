@@ -34,6 +34,7 @@ router.post('/upload', upload.fields([
     const rol = String(dbUser?.rol || '').toLowerCase();
 
     const { name, description, type = 'free', price, category = 'otro' } = req.body;
+    const previewUrlInput = String(req.body?.preview_url || '').trim();
     // accept epago either as `epago` or `price` form field
     const epagoInputRaw = (req.body && (typeof req.body.epago !== 'undefined')) ? req.body.epago : price;
     const previewFile = req.files && req.files.preview && req.files.preview[0];
@@ -165,6 +166,14 @@ router.post('/upload', upload.fields([
     // If VIP but no numeric price parsed, default to $2
     if (tipoFinal === 'vip' && (!Number.isFinite(Number(priceUsdToStore)) || Number(priceUsdToStore) <= 0)) {
       priceUsdToStore = 2;
+    }
+
+    // If user provided a preview URL, persist it according to file type.
+    // - free => preview image URL
+    // - vip => preview video URL
+    if (previewUrlInput) {
+      if (tipoFinal === 'vip') previewVideoPublicUrl = previewUrlInput;
+      else previewImagePublicUrl = previewUrlInput;
     }
 
     // Reglas de subida:
