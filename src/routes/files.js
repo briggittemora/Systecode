@@ -55,6 +55,13 @@ const normalizeEmail = (v) => {
   return s ? s.toLowerCase() : null;
 };
 
+const normalizeFileLanguage = (value) => {
+  const raw = String(value || '').trim().toLowerCase();
+  if (raw === 'en' || raw === 'english' || raw === 'ingles' || raw === 'inglés') return 'en';
+  if (raw === 'es' || raw === 'spanish' || raw === 'espanol' || raw === 'español') return 'es';
+  return null;
+};
+
 const getLegacyUserIdCandidates = (rec) => {
   const keys = [
     'user_id',
@@ -227,25 +234,41 @@ async function buildUploaderResolver(records) {
 // GET /api/files
 router.get('/files', async (req, res) => {
   try {
-    const { search, type, category, limit = 50, offset = 0 } = req.query;
-    let query = supabaseDB.from('html_files').select('*').order('created_at', { ascending: false });
-    // Search against filename and descripcion columns
-    if (search) {
-      const s = search.replace(/%/g, '\\%');
-      query = query.or(`filename.ilike.%${s}%,descripcion.ilike.%${s}%`);
-    }
-    // Filter using actual DB column names: 'tipo' and 'categoria'
-    if (type) query = query.eq('tipo', type);
-    if (category) {
-      // allow flexible category filtering: exact match or case-insensitive partial match
-      const c = String(category).trim();
-      if (c.length > 0) {
-        query = query.ilike('categoria', `%${c}%`);
-      }
-    }
+    const { search, type, category, language, lang, limit = 50, offset = 0 } = req.query;
+    const normalizedLanguage = normalizeFileLanguage(language || lang);
     const start = parseInt(offset, 10) || 0;
     const lim = Math.min(parseInt(limit, 10) || 50, 1000);
-    const { data, error } = await query.range(start, start + lim - 1);
+    const runListQuery = async (includeLanguageFilter) => {
+      let query = supabaseDB.from('html_files').select('*').order('created_at', { ascending: false });
+      // Search against filename and descripcion columns
+      if (search) {
+        const s = search.replace(/%/g, '\\%');
+        query = query.or(`filename.ilike.%${s}%,descripcion.ilike.%${s}%`);
+      }
+      // Filter using actual DB column names: 'tipo' and 'categoria'
+      if (type) query = query.eq('tipo', type);
+      if (category) {
+        // allow flexible category filtering: exact match or case-insensitive partial match
+        const c = String(category).trim();
+        if (c.length > 0) {
+          query = query.ilike('categoria', `%${c}%`);
+        }
+      }
+      if (includeLanguageFilter && normalizedLanguage) {
+        query = query.eq('language', normalizedLanguage);
+      }
+      return query.range(start, start + lim - 1);
+    };
+
+    let { data, error } = await runListQuery(Boolean(normalizedLanguage));
+    if (error && normalizedLanguage) {
+      const msg = String(error.message || error || '').toLowerCase();
+      if (msg.includes('language') && msg.includes('does not exist')) {
+        const retry = await runListQuery(false);
+        data = retry.data;
+        error = retry.error;
+      }
+    }
     if (error) {
       console.warn('Supabase list error:', error.message || error);
       const msg = (error && error.message) || String(error || 'Error fetching files');
@@ -284,11 +307,13 @@ router.get('/files', async (req, res) => {
       const priceUsd = getVipFilePriceUsd(rec);
       const isVip = !explicitFree && isVipFileRecord(rec);
       const price = Number.isFinite(priceUsd) ? priceUsd : null;
+      const mappedLanguage = normalizeFileLanguage(rec.language || rec.idioma) || 'es';
       return {
         id: rec.id,
         name: rawName || filename || `Archivo ${rec.id}`,
         slug,
         type: isVip ? 'vip' : 'free',
+        language: mappedLanguage,
         category: rec.categoria || rec.category || null,
         price,
         description: rec.descripcion || rec.description || null,
@@ -369,11 +394,13 @@ router.get('/file/:id', async (req, res) => {
     const priceUsd2 = getVipFilePriceUsd(rec);
     const isVip = !explicitFree2 && isVipFileRecord(rec);
     const price = Number.isFinite(priceUsd2) ? priceUsd2 : null;
+    const mappedLanguage = normalizeFileLanguage(rec.language || rec.idioma) || 'es';
     const mapped = {
       id: rec.id,
       name: rawName || filename || `Archivo ${rec.id}`,
       slug,
       type: isVip ? 'vip' : 'free',
+      language: mappedLanguage,
       category: rec.categoria || rec.category || null,
       price,
       description: rec.descripcion || rec.description || null,
@@ -425,7 +452,7 @@ router.put('/file/:id', async (req, res) => {
     if (!isOwner && role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
 
     const allowed = {};
-    const { name, description, category, tipo, epago, preview_url, preview_image_url, preview_video_url } = req.body || {};
+    const { name, description, category, tipo, epago, language, preview_url, preview_image_url, preview_video_url } = req.body || {};
 
     // Only admin can set/modify VIP-related fields (tipo/epago).
     // This prevents non-admins from turning a free file into VIP via edit.
@@ -453,6 +480,10 @@ router.put('/file/:id', async (req, res) => {
     if (typeof category !== 'undefined') allowed.categoria = category;
     if (typeof tipo !== 'undefined') allowed.tipo = tipo;
     if (typeof epago !== 'undefined') allowed.epago = epago;
+    if (typeof language !== 'undefined') {
+      const normalizedLanguage = normalizeFileLanguage(language);
+      if (normalizedLanguage) allowed.language = normalizedLanguage;
+    }
 
     // Allow setting preview URLs directly from the edit form
     // Note: there is no `preview` DB column; map `preview_url` to image or video columns.
@@ -472,7 +503,17 @@ router.put('/file/:id', async (req, res) => {
       }
     }
 
-    const { data: up, error: upErr } = await supabaseDB.from('html_files').update(allowed).eq('id', rec.id).select();
+    let { data: up, error: upErr } = await supabaseDB.from('html_files').update(allowed).eq('id', rec.id).select();
+    if (upErr) {
+      const msg = String(upErr.message || upErr || '').toLowerCase();
+      if (msg.includes('language') && msg.includes('does not exist') && Object.prototype.hasOwnProperty.call(allowed, 'language')) {
+        const retryPayload = { ...allowed };
+        delete retryPayload.language;
+        const retry = await supabaseDB.from('html_files').update(retryPayload).eq('id', rec.id).select();
+        up = retry.data;
+        upErr = retry.error;
+      }
+    }
     if (upErr) return res.status(500).json({ error: upErr.message || String(upErr) });
     return res.json({ success: true, data: up && up[0] });
   } catch (e) {

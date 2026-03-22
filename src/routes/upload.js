@@ -8,6 +8,12 @@ const { getSupabaseUserFromRequest, getUserRowByEmail } = require('../utils/supa
 const upload = multer({ storage: multer.memoryStorage() });
 const router = express.Router();
 
+const normalizeFileLanguage = (value) => {
+  const raw = String(value || '').trim().toLowerCase();
+  if (raw === 'en' || raw === 'english' || raw === 'ingles' || raw === 'inglés') return 'en';
+  return 'es';
+};
+
 const GHP_TOKEN = process.env.GHPAGES_TOKEN;
 const GHP_OWNER = process.env.GHPAGES_OWNER;
 const GHP_REPO = process.env.GHPAGES_REPO;
@@ -33,7 +39,7 @@ router.post('/upload', upload.fields([
     const { row: dbUser } = await getUserRowByEmail(email);
     const rol = String(dbUser?.rol || '').toLowerCase();
 
-    const { name, description, type = 'free', price, category = 'otro' } = req.body;
+    const { name, description, type = 'free', price, category = 'otro', language } = req.body;
     const previewUrlInput = String(req.body?.preview_url || '').trim();
     // accept epago either as `epago` or `price` form field
     const epagoInputRaw = (req.body && (typeof req.body.epago !== 'undefined')) ? req.body.epago : price;
@@ -183,6 +189,8 @@ router.post('/upload', upload.fields([
       return res.status(403).json({ error: 'Solo un admin puede subir archivos VIP.' });
     }
 
+    const fileLanguage = normalizeFileLanguage(language);
+
     // insert metadata - use DB column names (spanish) and fail if insert fails
     let dbRecord = null;
     try {
@@ -197,16 +205,21 @@ router.post('/upload', upload.fields([
         descripcion: description || null,
         preview_image_url: previewImagePublicUrl,
         preview_video_url: previewVideoPublicUrl,
+        language: fileLanguage,
         supabase_url: htmlPublicUrl,
         file_url: fileUrl
       };
       let { data: insertData, error: insertError } = await supabaseDB.from('html_files').insert([insertPayload]).select();
       if (insertError) {
         const msg = String(insertError.message || insertError || '');
-        // If DB hasn't been migrated yet, retry without price_usd
-        if (msg.toLowerCase().includes('price_usd') && msg.toLowerCase().includes('does not exist')) {
+        // If DB hasn't been migrated yet, retry without optional columns.
+        if (
+          (msg.toLowerCase().includes('price_usd') && msg.toLowerCase().includes('does not exist')) ||
+          (msg.toLowerCase().includes('language') && msg.toLowerCase().includes('does not exist'))
+        ) {
           const retryPayload = { ...insertPayload };
-          delete retryPayload.price_usd;
+          if (msg.toLowerCase().includes('price_usd') && msg.toLowerCase().includes('does not exist')) delete retryPayload.price_usd;
+          if (msg.toLowerCase().includes('language') && msg.toLowerCase().includes('does not exist')) delete retryPayload.language;
           const retry = await supabaseDB.from('html_files').insert([retryPayload]).select();
           insertData = retry.data;
           insertError = retry.error;
@@ -231,6 +244,7 @@ router.post('/upload', upload.fields([
         slug,
         category,
         type: tipoFinal,
+        language: dbRecord?.language || fileLanguage,
         price: (tipoFinal === 'vip') ? Number(priceUsdToStore) : null,
         preview: previewPublicUrl,
         html: htmlPublicUrl,
