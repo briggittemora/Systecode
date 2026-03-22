@@ -4,8 +4,9 @@ const { createClient } = require('@supabase/supabase-js');
 
 const router = express.Router();
 
-const SUPABASE_URL = process.env.SUPABASE_URL;
-const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+// Use DB/Auth project credentials first (same convention as src/supabaseClient.js)
+const SUPABASE_URL = process.env.SUPABASE_DB_URL || process.env.SUPABASE_URL;
+const SERVICE_ROLE_KEY = process.env.SUPABASE_DB_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 if (!SUPABASE_URL || !SERVICE_ROLE_KEY) {
   console.warn('[ensure-user] Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY in env');

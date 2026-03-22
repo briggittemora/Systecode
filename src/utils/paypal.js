@@ -48,6 +48,59 @@ async function getOrder(orderId, accessToken) {
   return resp.json();
 }
 
+async function createOrder({ accessToken, amount, currency = 'USD', description, customId }) {
+  const payload = {
+    intent: 'CAPTURE',
+    purchase_units: [
+      {
+        amount: {
+          currency_code: String(currency || 'USD').toUpperCase(),
+          value: Number(amount).toFixed(2),
+        },
+        ...(description ? { description: String(description) } : {}),
+        ...(customId ? { custom_id: String(customId) } : {}),
+      },
+    ],
+    application_context: {
+      shipping_preference: 'NO_SHIPPING',
+      user_action: 'PAY_NOW',
+    },
+  };
+
+  const resp = await fetch(`${BASE_URL}/v2/checkout/orders`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!resp.ok) {
+    const txt = await resp.text().catch(() => '');
+    throw new Error(`PayPal create order failed: ${resp.status} ${txt}`);
+  }
+
+  return resp.json();
+}
+
+async function captureOrder(orderId, accessToken) {
+  const resp = await fetch(`${BASE_URL}/v2/checkout/orders/${encodeURIComponent(orderId)}/capture`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!resp.ok) {
+    const txt = await resp.text().catch(() => '');
+    throw new Error(`PayPal capture order failed: ${resp.status} ${txt}`);
+  }
+
+  return resp.json();
+}
+
 function parseAmount(order) {
   const pu = order?.purchase_units?.[0];
   const amount = pu?.amount;
@@ -60,5 +113,7 @@ function parseAmount(order) {
 module.exports = {
   getPayPalAccessToken,
   getOrder,
+  createOrder,
+  captureOrder,
   parseAmount,
 };
