@@ -465,16 +465,6 @@ router.put('/file/:id', async (req, res) => {
       if (wantsVip && role !== 'admin') return res.status(403).json({ error: 'Solo un admin puede marcar un archivo como VIP.' });
     }
 
-    // Validate video preview URL: only VIP files (or admin) can set a preview video URL
-    const rawEpago = (rec && typeof rec.epago !== 'undefined' && rec.epago !== null) ? String(rec.epago).trim().toLowerCase() : '';
-    const epagoNumExisting = rawEpago && !isNaN(Number(rawEpago)) ? Number(rawEpago) : null;
-    const isVipFile = String(rec.tipo || '').toLowerCase() === 'vip' || rawEpago === 'vip' || (epagoNumExisting !== null && epagoNumExisting > 0);
-    if (typeof preview_video_url !== 'undefined' && preview_video_url !== null && preview_video_url !== '') {
-      if (!isVipFile && role !== 'admin') {
-        return res.status(403).json({ error: 'Solo archivos VIP (o admin) pueden tener preview en video.' });
-      }
-    }
-
     if (typeof name !== 'undefined') allowed.filename = name;
     if (typeof description !== 'undefined') allowed.descripcion = description;
     if (typeof category !== 'undefined') allowed.categoria = category;
@@ -554,11 +544,6 @@ router.post(
 
       if (!previewImageFile && !previewVideoFile && !htmlFile) {
         return res.status(400).json({ error: 'No files provided' });
-      }
-
-      // Rule: only VIP files (or admin) can set a preview video
-      if (previewVideoFile && !isVipFile && role !== 'admin') {
-        return res.status(403).json({ error: 'Solo archivos VIP (o admin) pueden tener preview en video.' });
       }
 
       const uploadToBucket = async (path, buffer, mime) => {

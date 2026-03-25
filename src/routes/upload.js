@@ -14,6 +14,13 @@ const normalizeFileLanguage = (value) => {
   return 'es';
 };
 
+const isLikelyVideoPreviewUrl = (value) => {
+  const text = String(value || '').trim().toLowerCase();
+  if (!text) return false;
+  if (/\.(mp4|webm|ogg|mov|m4v|avi)(\?|$)/.test(text)) return true;
+  return /drive\.google\.com\//.test(text);
+};
+
 const GHP_TOKEN = process.env.GHPAGES_TOKEN;
 const GHP_OWNER = process.env.GHPAGES_OWNER;
 const GHP_REPO = process.env.GHPAGES_REPO;
@@ -174,12 +181,14 @@ router.post('/upload', upload.fields([
       priceUsdToStore = 2;
     }
 
-    // If user provided a preview URL, persist it according to file type.
-    // - free => preview image URL
-    // - vip => preview video URL
+    // If user provided a preview URL, detect whether it is video-like.
+    // This allows free files to use a video preview URL too.
     if (previewUrlInput) {
-      if (tipoFinal === 'vip') previewVideoPublicUrl = previewUrlInput;
-      else previewImagePublicUrl = previewUrlInput;
+      if (isLikelyVideoPreviewUrl(previewUrlInput)) {
+        previewVideoPublicUrl = previewUrlInput;
+      } else {
+        previewImagePublicUrl = previewUrlInput;
+      }
     }
 
     // Reglas de subida:
