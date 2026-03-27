@@ -503,23 +503,39 @@ router.put('/file/:id', async (req, res) => {
       }
     }
 
-    let { data: up, error: upErr } = await supabaseDB.from('html_files').update(allowed).eq('id', rec.id).select();
-    if (upErr) {
-      const msg = String(upErr.message || upErr || '').toLowerCase();
-      if (msg.includes('language') && msg.includes('does not exist') && Object.prototype.hasOwnProperty.call(allowed, 'language')) {
-        const retryPayload = { ...allowed };
-        delete retryPayload.language;
-        const retry = await supabaseDB.from('html_files').update(retryPayload).eq('id', rec.id).select();
-        up = retry.data;
-        upErr = retry.error;
-      } else if (msg.includes('tutorial_title') && msg.includes('does not exist') && Object.prototype.hasOwnProperty.call(allowed, 'tutorial_title')) {
-        const retryPayload = { ...allowed };
-        delete retryPayload.tutorial_title;
-        const retry = await supabaseDB.from('html_files').update(retryPayload).eq('id', rec.id).select();
-        up = retry.data;
-        upErr = retry.error;
+    const extractMissingColumn = (message) => {
+      const msg = String(message || '');
+      let m = msg.match(/column\s+"?([A-Za-z0-9_]+)"?\s+does not exist/i);
+      if (m && m[1]) return m[1];
+      m = msg.match(/html_files\."?([A-Za-z0-9_]+)"?\s+does not exist/i);
+      if (m && m[1]) return m[1];
+      return null;
+    };
+
+    let up = null;
+    let upErr = null;
+    let retryPayload = { ...allowed };
+
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const keys = Object.keys(retryPayload);
+      if (keys.length === 0) {
+        upErr = { message: 'No hay columnas compatibles en la tabla html_files para guardar este cambio.' };
+        break;
       }
+
+      const retry = await supabaseDB.from('html_files').update(retryPayload).eq('id', rec.id).select();
+      up = retry.data;
+      upErr = retry.error;
+      if (!upErr) break;
+
+      const missingColumn = extractMissingColumn(upErr.message || upErr);
+      if (!missingColumn || !Object.prototype.hasOwnProperty.call(retryPayload, missingColumn)) {
+        break;
+      }
+
+      delete retryPayload[missingColumn];
     }
+
     if (upErr) return res.status(500).json({ error: upErr.message || String(upErr) });
     return res.json({ success: true, data: up && up[0] });
   } catch (e) {
