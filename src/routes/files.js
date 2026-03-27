@@ -320,6 +320,8 @@ router.get('/files', async (req, res) => {
         preview_url,
         preview_image_url: rec.preview_image_url || null,
         preview_video_url: rec.preview_video_url || null,
+        tutorial_url: rec.tutorial_url || null,
+        tutorial_title: rec.tutorial_title || null,
         html_url,
         is_video: !!rec.preview_video_url,
         created_at: rec.created_at,
@@ -407,6 +409,8 @@ router.get('/file/:id', async (req, res) => {
       preview_url,
       preview_image_url: rec.preview_image_url || null,
       preview_video_url: rec.preview_video_url || null,
+      tutorial_url: rec.tutorial_url || null,
+      tutorial_title: rec.tutorial_title || null,
       html_url,
       is_video: !!rec.preview_video_url,
       created_at: rec.created_at,
@@ -452,7 +456,7 @@ router.put('/file/:id', async (req, res) => {
     if (!isOwner && role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
 
     const allowed = {};
-    const { name, description, category, tipo, epago, language, preview_url, preview_image_url, preview_video_url } = req.body || {};
+    const { name, description, category, tipo, epago, language, preview_url, preview_image_url, preview_video_url, tutorial_url, tutorial_title } = req.body || {};
 
     // Only admin can set/modify VIP-related fields (tipo/epago).
     // This prevents non-admins from turning a free file into VIP via edit.
@@ -483,6 +487,12 @@ router.put('/file/:id', async (req, res) => {
     if (typeof preview_video_url !== 'undefined') {
       allowed.preview_video_url = preview_video_url || null;
     }
+    if (typeof tutorial_url !== 'undefined') {
+      allowed.tutorial_url = tutorial_url || null;
+    }
+    if (typeof tutorial_title !== 'undefined') {
+      allowed.tutorial_title = tutorial_title || null;
+    }
     if (typeof preview_url !== 'undefined' && (typeof preview_image_url === 'undefined' && typeof preview_video_url === 'undefined')) {
       // Guess type by file extension in the URL (basic heuristic)
       const urlLower = String(preview_url || '').toLowerCase();
@@ -499,6 +509,12 @@ router.put('/file/:id', async (req, res) => {
       if (msg.includes('language') && msg.includes('does not exist') && Object.prototype.hasOwnProperty.call(allowed, 'language')) {
         const retryPayload = { ...allowed };
         delete retryPayload.language;
+        const retry = await supabaseDB.from('html_files').update(retryPayload).eq('id', rec.id).select();
+        up = retry.data;
+        upErr = retry.error;
+      } else if (msg.includes('tutorial_title') && msg.includes('does not exist') && Object.prototype.hasOwnProperty.call(allowed, 'tutorial_title')) {
+        const retryPayload = { ...allowed };
+        delete retryPayload.tutorial_title;
         const retry = await supabaseDB.from('html_files').update(retryPayload).eq('id', rec.id).select();
         up = retry.data;
         upErr = retry.error;
