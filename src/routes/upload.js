@@ -18,7 +18,8 @@ const isLikelyVideoPreviewUrl = (value) => {
   const text = String(value || '').trim().toLowerCase();
   if (!text) return false;
   if (/\.(mp4|webm|ogg|mov|m4v|avi)(\?|$)/.test(text)) return true;
-  return /drive\.google\.com\//.test(text);
+  if (/drive\.google\.com\//.test(text)) return true;
+  return /(?:youtube\.com|youtu\.be)\//.test(text);
 };
 
 const GHP_TOKEN = process.env.GHPAGES_TOKEN;

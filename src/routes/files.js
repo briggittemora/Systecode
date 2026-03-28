@@ -496,7 +496,10 @@ router.put('/file/:id', async (req, res) => {
     if (typeof preview_url !== 'undefined' && (typeof preview_image_url === 'undefined' && typeof preview_video_url === 'undefined')) {
       // Guess type by file extension in the URL (basic heuristic)
       const urlLower = String(preview_url || '').toLowerCase();
-      if (urlLower.match(/\.(mp4|webm|mov|ogg|m4v|avi)(\?|$)/)) {
+      const isLikelyVideo = urlLower.match(/\.(mp4|webm|mov|ogg|m4v|avi)(\?|$)/)
+        || /drive\.google\.com\//.test(urlLower)
+        || /(?:youtube\.com|youtu\.be)\//.test(urlLower);
+      if (isLikelyVideo) {
         allowed.preview_video_url = preview_url || null;
       } else {
         allowed.preview_image_url = preview_url || null;
