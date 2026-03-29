@@ -24,16 +24,25 @@ const hasCompletedMembershipOrder = async (email) => {
   try {
     const { data, error } = await supabaseAdmin
       .from('paypal_orders')
-      .select('order_id')
+      .select('order_id, custom_id, amount, currency, status')
       .eq('email', normalizedEmail)
       .eq('status', 'COMPLETED')
-      .in('custom_id', MEMBERSHIP_CUSTOM_IDS)
-      .limit(1);
+      .limit(20);
     if (error) {
       console.warn('[ensure-user] membership lookup error', error.message || error);
       return false;
     }
-    return Array.isArray(data) && data.length > 0;
+    if (!Array.isArray(data) || data.length === 0) return false;
+
+    return data.some((row) => {
+      const customId = String(row?.custom_id || '').trim().toLowerCase();
+      if (MEMBERSHIP_CUSTOM_IDS.includes(customId)) return true;
+
+      // Legacy fallback: some old membership orders may not have custom_id.
+      const amount = Number(row?.amount);
+      const currency = String(row?.currency || '').trim().toUpperCase();
+      return Number.isFinite(amount) && amount === 4 && currency === 'USD';
+    });
   } catch (e) {
     console.warn('[ensure-user] membership lookup exception', e?.message || e);
     return false;

@@ -68,6 +68,62 @@ const isVipMemberRecord = (dbUser) => {
   return modalidad === 'vip' || membership === 'vip';
 };
 
+const MEMBERSHIP_CUSTOM_IDS = ['vip-permanent', 'vip-monthly', 'vip-membership'];
+
+const hasVipMembershipOrder = async (email) => {
+  const normalizedEmail = normalizeEmail(email);
+  if (!normalizedEmail) return false;
+
+  try {
+    const { data, error } = await supabaseDB
+      .from('paypal_orders')
+      .select('order_id, custom_id, amount, currency, status')
+      .eq('email', normalizedEmail)
+      .eq('status', 'COMPLETED')
+      .limit(20);
+
+    if (error) {
+      console.warn('[vip-access] paypal_orders lookup error:', error.message || error);
+      return false;
+    }
+
+    if (!Array.isArray(data) || data.length === 0) return false;
+
+    return data.some((row) => {
+      const customId = String(row?.custom_id || '').trim().toLowerCase();
+      if (MEMBERSHIP_CUSTOM_IDS.includes(customId)) return true;
+      const amount = Number(row?.amount);
+      const currency = String(row?.currency || '').trim().toUpperCase();
+      // Backward compatibility: legacy membership rows may not have custom_id.
+      return Number.isFinite(amount) && amount === 4 && currency === 'USD';
+    });
+  } catch (e) {
+    console.warn('[vip-access] paypal_orders lookup exception:', e?.message || e);
+    return false;
+  }
+};
+
+const resolveVipAccess = async (dbUser, email) => {
+  if (isVipMemberRecord(dbUser)) return { isVipMember: true, source: 'profile' };
+
+  const isVipByOrders = await hasVipMembershipOrder(email);
+  if (isVipByOrders) {
+    try {
+      if (email) {
+        await supabaseDB
+          .from('users')
+          .update({ modalidad: 'vip' })
+          .eq('email', String(email).trim().toLowerCase());
+      }
+    } catch (e) {
+      console.warn('[vip-access] failed to backfill users.modalidad=vip:', e?.message || e);
+    }
+    return { isVipMember: true, source: 'orders' };
+  }
+
+  return { isVipMember: false, source: 'none' };
+};
+
 const getLegacyUserIdCandidates = (rec) => {
   const keys = [
     'user_id',
@@ -457,7 +513,8 @@ router.put('/file/:id', async (req, res) => {
     // fetch user row to get role
     const { row: dbUser } = await require('../utils/supabaseAuth').getUserRowByEmail(user.email);
     const role = String(dbUser?.rol || '').toLowerCase();
-    const isVipMember = isVipMemberRecord(dbUser);
+    const vipAccess = await resolveVipAccess(dbUser, user.email);
+    const isVipMember = vipAccess.isVipMember;
 
     const isOwner = rec.user_id && user.id && String(rec.user_id) === String(user.id);
     if (!isOwner && role !== 'admin' && !isVipMember) return res.status(403).json({ error: 'Forbidden' });
@@ -573,7 +630,8 @@ router.post(
 
       const { row: dbUser } = await require('../utils/supabaseAuth').getUserRowByEmail(user.email);
       const role = String(dbUser?.rol || '').toLowerCase();
-      const isVipMember = isVipMemberRecord(dbUser);
+      const vipAccess = await resolveVipAccess(dbUser, user.email);
+      const isVipMember = vipAccess.isVipMember;
       const isOwner = rec.user_id && user.id && String(rec.user_id) === String(user.id);
       if (!isOwner && role !== 'admin' && !isVipMember) return res.status(403).json({ error: 'Forbidden' });
 
@@ -686,10 +744,11 @@ router.post('/file/:id/publish', async (req, res) => {
     const role = String(dbUser?.rol || '').toLowerCase();
     const modalidad = String(dbUser?.modalidad || '').toLowerCase();
     const membership = String(dbUser?.membership || '').toLowerCase();
-    const isVipMember = isVipMemberRecord(dbUser);
+    const vipAccess = await resolveVipAccess(dbUser, user.email);
+    const isVipMember = vipAccess.isVipMember;
     const isOwner = rec.user_id && user.id && String(rec.user_id) === String(user.id);
     if (!isOwner && role !== 'admin' && !isVipMember) {
-      console.warn('[publish] forbidden id=', id, 'owner=', rec.user_id || '(none)', 'user=', user.id || '(none)', 'role=', role || '(none)', 'modalidad=', modalidad || '(none)', 'membership=', membership || '(none)');
+      console.warn('[publish] forbidden id=', id, 'owner=', rec.user_id || '(none)', 'user=', user.id || '(none)', 'role=', role || '(none)', 'modalidad=', modalidad || '(none)', 'membership=', membership || '(none)', 'vip_source=', vipAccess.source);
       return res.status(403).json({ error: 'Forbidden' });
     }
 
@@ -779,7 +838,8 @@ router.post('/file/:id/upload-audio-github', upload.single('audioFile'), async (
 
     const { row: dbUser } = await require('../utils/supabaseAuth').getUserRowByEmail(user.email);
     const role = String(dbUser?.rol || '').toLowerCase();
-    const isVipMember = isVipMemberRecord(dbUser);
+    const vipAccess = await resolveVipAccess(dbUser, user.email);
+    const isVipMember = vipAccess.isVipMember;
     const isOwner = rec.user_id && user.id && String(rec.user_id) === String(user.id);
     if (!isOwner && role !== 'admin' && !isVipMember) return res.status(403).json({ error: 'Forbidden' });
 
