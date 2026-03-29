@@ -451,9 +451,11 @@ router.put('/file/:id', async (req, res) => {
     // fetch user row to get role
     const { row: dbUser } = await require('../utils/supabaseAuth').getUserRowByEmail(user.email);
     const role = String(dbUser?.rol || '').toLowerCase();
+    const modalidad = String(dbUser?.modalidad || '').toLowerCase();
+    const isVipMember = modalidad === 'vip';
 
     const isOwner = rec.user_id && user.id && String(rec.user_id) === String(user.id);
-    if (!isOwner && role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
+    if (!isOwner && role !== 'admin' && !isVipMember) return res.status(403).json({ error: 'Forbidden' });
 
     const allowed = {};
     const { name, description, category, tipo, epago, language, preview_url, preview_image_url, preview_video_url, tutorial_url, tutorial_title } = req.body || {};
@@ -566,8 +568,10 @@ router.post(
 
       const { row: dbUser } = await require('../utils/supabaseAuth').getUserRowByEmail(user.email);
       const role = String(dbUser?.rol || '').toLowerCase();
+      const modalidad = String(dbUser?.modalidad || '').toLowerCase();
+      const isVipMember = modalidad === 'vip';
       const isOwner = rec.user_id && user.id && String(rec.user_id) === String(user.id);
-      if (!isOwner && role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
+      if (!isOwner && role !== 'admin' && !isVipMember) return res.status(403).json({ error: 'Forbidden' });
 
       const rawEpago = (rec && typeof rec.epago !== 'undefined' && rec.epago !== null) ? String(rec.epago).trim().toLowerCase() : '';
       const epagoNum = rawEpago && !isNaN(Number(rawEpago)) ? Number(rawEpago) : null;
@@ -657,24 +661,41 @@ router.post('/file/:id/publish', async (req, res) => {
   try {
     const { id } = req.params;
     const { html } = req.body || {};
-    if (!html) return res.status(400).json({ error: 'Missing html in body' });
+    if (!html) {
+      console.warn('[publish] missing html in body id=', id);
+      return res.status(400).json({ error: 'Missing html in body' });
+    }
 
     const { user } = await require('../utils/supabaseAuth').getSupabaseUserFromRequest(req);
-    if (!user) return res.status(401).json({ error: 'No autorizado' });
+    if (!user) {
+      console.warn('[publish] unauthorized: missing/invalid token id=', id);
+      return res.status(401).json({ error: 'No autorizado' });
+    }
 
     const rec = await tryFindFileByIdOrSlug(id);
-    if (!rec) return res.status(404).json({ error: 'Not found' });
+    if (!rec) {
+      console.warn('[publish] file not found id=', id, 'user=', user.id || user.email || '(unknown)');
+      return res.status(404).json({ error: 'Not found' });
+    }
 
     const { row: dbUser } = await require('../utils/supabaseAuth').getUserRowByEmail(user.email);
     const role = String(dbUser?.rol || '').toLowerCase();
+    const modalidad = String(dbUser?.modalidad || '').toLowerCase();
+    const isVipMember = modalidad === 'vip';
     const isOwner = rec.user_id && user.id && String(rec.user_id) === String(user.id);
-    if (!isOwner && role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
+    if (!isOwner && role !== 'admin' && !isVipMember) {
+      console.warn('[publish] forbidden id=', id, 'owner=', rec.user_id || '(none)', 'user=', user.id || '(none)', 'role=', role || '(none)', 'modalidad=', modalidad || '(none)');
+      return res.status(403).json({ error: 'Forbidden' });
+    }
 
     // Support both legacy GITHUB_* names and existing GHPAGES_* names in .env
     const GH_OWNER = process.env.GHPAGES_OWNER || process.env.GITHUB_PAGES_REPO_OWNER || process.env.GH_PAGES_OWNER;
     const GH_REPO = process.env.GHPAGES_REPO || process.env.GITHUB_PAGES_REPO_NAME || process.env.GH_PAGES_REPO;
     const GH_TOKEN = process.env.GHPAGES_TOKEN || process.env.GITHUB_TOKEN || process.env.GITHUB_PAGES_TOKEN || process.env.GH_PAGES_TOKEN;
-    if (!GH_OWNER || !GH_REPO || !GH_TOKEN) return res.status(500).json({ error: 'GitHub Pages not configured on server' });
+    if (!GH_OWNER || !GH_REPO || !GH_TOKEN) {
+      console.error('[publish] github pages config missing owner/repo/token');
+      return res.status(500).json({ error: 'GitHub Pages not configured on server' });
+    }
 
     const octokit = new Octokit({ auth: GH_TOKEN });
 
@@ -744,6 +765,19 @@ router.post('/file/:id/upload-audio-github', upload.single('audioFile'), async (
     const { id } = req.params;
     const audioFile = req.file;
     if (!audioFile) return res.status(400).json({ error: 'missing_file' });
+
+    const { user } = await require('../utils/supabaseAuth').getSupabaseUserFromRequest(req);
+    if (!user) return res.status(401).json({ error: 'No autorizado' });
+
+    const rec = await tryFindFileByIdOrSlug(id);
+    if (!rec) return res.status(404).json({ error: 'Not found' });
+
+    const { row: dbUser } = await require('../utils/supabaseAuth').getUserRowByEmail(user.email);
+    const role = String(dbUser?.rol || '').toLowerCase();
+    const modalidad = String(dbUser?.modalidad || '').toLowerCase();
+    const isVipMember = modalidad === 'vip';
+    const isOwner = rec.user_id && user.id && String(rec.user_id) === String(user.id);
+    if (!isOwner && role !== 'admin' && !isVipMember) return res.status(403).json({ error: 'Forbidden' });
 
     // require GitHub config similar to publish endpoint
     const GH_OWNER = process.env.GHPAGES_OWNER || process.env.GITHUB_PAGES_REPO_OWNER || process.env.GH_PAGES_OWNER;
