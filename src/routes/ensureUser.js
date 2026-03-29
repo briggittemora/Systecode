@@ -16,6 +16,30 @@ const supabaseAdmin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
   auth: { persistSession: false },
 });
 
+const MEMBERSHIP_CUSTOM_IDS = ['vip-permanent', 'vip-monthly', 'vip-membership'];
+
+const hasCompletedMembershipOrder = async (email) => {
+  const normalizedEmail = String(email || '').trim().toLowerCase();
+  if (!normalizedEmail) return false;
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('paypal_orders')
+      .select('order_id')
+      .eq('email', normalizedEmail)
+      .eq('status', 'COMPLETED')
+      .in('custom_id', MEMBERSHIP_CUSTOM_IDS)
+      .limit(1);
+    if (error) {
+      console.warn('[ensure-user] membership lookup error', error.message || error);
+      return false;
+    }
+    return Array.isArray(data) && data.length > 0;
+  } catch (e) {
+    console.warn('[ensure-user] membership lookup exception', e?.message || e);
+    return false;
+  }
+};
+
 // POST /api/ensure-user
 // Body: { access_token }
 // Validates the token with Supabase auth endpoint and upserts a row in public.users
@@ -52,19 +76,48 @@ router.post('/ensure-user', async (req, res) => {
       user?.email ||
       'Usuario';
 
-    // Build payload with safe defaults; only keep allowed fields
-    const payload = {
-      id: user.id,
-      email: user.email || null,
-      name: displayName,
-      modalidad: 'gratuita',
-      rol: 'miembro',
-    };
+    // Do not overwrite membership/role on each login.
+    // Insert defaults only when the row does not exist yet.
+    const { data: existing, error: existingError } = await supabaseAdmin
+      .from('users')
+      .select('id, email, name, modalidad')
+      .eq('id', user.id)
+      .maybeSingle();
 
-    const { error } = await supabaseAdmin.from('users').upsert(payload, { onConflict: 'id' });
-    if (error) {
-      console.error('[ensure-user] upsert error', error);
-      return res.status(500).json({ error: 'db_error', details: error });
+    if (existingError) {
+      console.error('[ensure-user] select existing user error', existingError);
+      return res.status(500).json({ error: 'db_error', details: existingError });
+    }
+
+    if (existing) {
+      const updates = {};
+      const isVipByOrders = await hasCompletedMembershipOrder(user.email);
+      if (user.email && user.email !== existing.email) updates.email = user.email;
+      if ((!existing.name || !String(existing.name).trim()) && displayName) updates.name = displayName;
+      if (isVipByOrders && String(existing.modalidad || '').toLowerCase() !== 'vip') updates.modalidad = 'vip';
+
+      if (Object.keys(updates).length > 0) {
+        const { error: updateError } = await supabaseAdmin.from('users').update(updates).eq('id', user.id);
+        if (updateError) {
+          console.error('[ensure-user] update existing user error', updateError);
+          return res.status(500).json({ error: 'db_error', details: updateError });
+        }
+      }
+    } else {
+      const isVipByOrders = await hasCompletedMembershipOrder(user.email);
+      const insertPayload = {
+        id: user.id,
+        email: user.email || null,
+        name: displayName,
+        modalidad: isVipByOrders ? 'vip' : 'gratuita',
+        rol: 'miembro',
+      };
+
+      const { error: insertError } = await supabaseAdmin.from('users').insert(insertPayload);
+      if (insertError) {
+        console.error('[ensure-user] insert new user error', insertError);
+        return res.status(500).json({ error: 'db_error', details: insertError });
+      }
     }
 
     return res.json({ ok: true, id: user.id });

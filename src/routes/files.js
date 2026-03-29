@@ -62,6 +62,12 @@ const normalizeFileLanguage = (value) => {
   return null;
 };
 
+const isVipMemberRecord = (dbUser) => {
+  const modalidad = String(dbUser?.modalidad || '').trim().toLowerCase();
+  const membership = String(dbUser?.membership || '').trim().toLowerCase();
+  return modalidad === 'vip' || membership === 'vip';
+};
+
 const getLegacyUserIdCandidates = (rec) => {
   const keys = [
     'user_id',
@@ -451,8 +457,7 @@ router.put('/file/:id', async (req, res) => {
     // fetch user row to get role
     const { row: dbUser } = await require('../utils/supabaseAuth').getUserRowByEmail(user.email);
     const role = String(dbUser?.rol || '').toLowerCase();
-    const modalidad = String(dbUser?.modalidad || '').toLowerCase();
-    const isVipMember = modalidad === 'vip';
+    const isVipMember = isVipMemberRecord(dbUser);
 
     const isOwner = rec.user_id && user.id && String(rec.user_id) === String(user.id);
     if (!isOwner && role !== 'admin' && !isVipMember) return res.status(403).json({ error: 'Forbidden' });
@@ -568,8 +573,7 @@ router.post(
 
       const { row: dbUser } = await require('../utils/supabaseAuth').getUserRowByEmail(user.email);
       const role = String(dbUser?.rol || '').toLowerCase();
-      const modalidad = String(dbUser?.modalidad || '').toLowerCase();
-      const isVipMember = modalidad === 'vip';
+      const isVipMember = isVipMemberRecord(dbUser);
       const isOwner = rec.user_id && user.id && String(rec.user_id) === String(user.id);
       if (!isOwner && role !== 'admin' && !isVipMember) return res.status(403).json({ error: 'Forbidden' });
 
@@ -681,10 +685,11 @@ router.post('/file/:id/publish', async (req, res) => {
     const { row: dbUser } = await require('../utils/supabaseAuth').getUserRowByEmail(user.email);
     const role = String(dbUser?.rol || '').toLowerCase();
     const modalidad = String(dbUser?.modalidad || '').toLowerCase();
-    const isVipMember = modalidad === 'vip';
+    const membership = String(dbUser?.membership || '').toLowerCase();
+    const isVipMember = isVipMemberRecord(dbUser);
     const isOwner = rec.user_id && user.id && String(rec.user_id) === String(user.id);
     if (!isOwner && role !== 'admin' && !isVipMember) {
-      console.warn('[publish] forbidden id=', id, 'owner=', rec.user_id || '(none)', 'user=', user.id || '(none)', 'role=', role || '(none)', 'modalidad=', modalidad || '(none)');
+      console.warn('[publish] forbidden id=', id, 'owner=', rec.user_id || '(none)', 'user=', user.id || '(none)', 'role=', role || '(none)', 'modalidad=', modalidad || '(none)', 'membership=', membership || '(none)');
       return res.status(403).json({ error: 'Forbidden' });
     }
 
@@ -774,8 +779,7 @@ router.post('/file/:id/upload-audio-github', upload.single('audioFile'), async (
 
     const { row: dbUser } = await require('../utils/supabaseAuth').getUserRowByEmail(user.email);
     const role = String(dbUser?.rol || '').toLowerCase();
-    const modalidad = String(dbUser?.modalidad || '').toLowerCase();
-    const isVipMember = modalidad === 'vip';
+    const isVipMember = isVipMemberRecord(dbUser);
     const isOwner = rec.user_id && user.id && String(rec.user_id) === String(user.id);
     if (!isOwner && role !== 'admin' && !isVipMember) return res.status(403).json({ error: 'Forbidden' });
 
@@ -935,8 +939,8 @@ router.get('/file/:id/download', async (req, res) => {
         if (!email) return res.status(401).json({ error: 'No autorizado' });
 
         const { row: dbUser } = await getUserRowByEmail(email);
-        const modalidad = String(dbUser?.modalidad || '').toLowerCase();
-        if (modalidad !== 'vip') {
+        const isVipMember = isVipMemberRecord(dbUser);
+        if (!isVipMember) {
           const customId = customIdForFile(rec.id || id);
           const { data: prow, error: perr } = await supabaseDB
             .from('paypal_orders')
