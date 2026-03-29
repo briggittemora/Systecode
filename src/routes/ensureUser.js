@@ -46,10 +46,17 @@ router.post('/ensure-user', async (req, res) => {
     console.log('[ensure-user] validated user id=', user?.id ? user.id : '(none)');
     if (!user || !user.id) return res.status(401).json({ error: 'invalid user' });
 
+    const displayName =
+      user?.user_metadata?.full_name ||
+      user?.user_metadata?.name ||
+      user?.email ||
+      'Usuario';
+
     // Build payload with safe defaults; only keep allowed fields
     const payload = {
       id: user.id,
       email: user.email || null,
+      name: displayName,
       modalidad: 'gratuita',
       rol: 'miembro',
     };
@@ -88,6 +95,7 @@ router.post('/ensure-user/test', async (req, res) => {
     const payload = {
       id: supabase_user_id || null,
       email: email || null,
+      name: full_name || email || 'Usuario',
       modalidad: 'gratuita',
       rol: 'miembro',
     };
