@@ -78,6 +78,81 @@ const sanitizeStorageObjectName = (value, fallback = 'file') => {
   return `${finalBase}${ext}`;
 };
 
+const getGithubPagesConfig = () => {
+  const owner = process.env.GHPAGES_OWNER || process.env.GITHUB_PAGES_REPO_OWNER || process.env.GH_PAGES_OWNER;
+  const repo = process.env.GHPAGES_REPO || process.env.GITHUB_PAGES_REPO_NAME || process.env.GH_PAGES_REPO;
+  const token = process.env.GHPAGES_TOKEN || process.env.GITHUB_TOKEN || process.env.GITHUB_PAGES_TOKEN || process.env.GH_PAGES_TOKEN;
+  const branch = process.env.GHPAGES_BRANCH || process.env.GITHUB_PAGES_BRANCH || 'gh-pages';
+  const baseUrl = (process.env.GHPAGES_BASE_URL || process.env.GITHUB_PAGES_BASE_URL || '').toString().trim();
+  return { owner, repo, token, branch, baseUrl };
+};
+
+const publishHtmlToGithubPages = async (rec, html) => {
+  const cfg = getGithubPagesConfig();
+  if (!cfg.owner || !cfg.repo || !cfg.token) {
+    throw new Error('GitHub Pages not configured on server');
+  }
+
+  const octokit = new Octokit({ auth: cfg.token });
+  const filenameSafe = String(rec.name || rec.filename || `file-${rec.id}`)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)/g, '');
+  const path = `${String(rec.id)}-${filenameSafe}.html`;
+
+  try {
+    await octokit.rest.git.getRef({ owner: cfg.owner, repo: cfg.repo, ref: `heads/${cfg.branch}` });
+  } catch (e) {
+    const repoInfo = await octokit.rest.repos.get({ owner: cfg.owner, repo: cfg.repo });
+    const defaultBranch = repoInfo.data.default_branch;
+    const commit = await octokit.rest.repos.getCommit({ owner: cfg.owner, repo: cfg.repo, ref: defaultBranch });
+    const baseSha = commit.data.sha;
+    await octokit.rest.git.createRef({ owner: cfg.owner, repo: cfg.repo, ref: `refs/heads/${cfg.branch}`, sha: baseSha });
+  }
+
+  const contentB64 = Buffer.from(String(html || ''), 'utf8').toString('base64');
+  let existingSha = null;
+  try {
+    const getRes = await octokit.rest.repos.getContent({ owner: cfg.owner, repo: cfg.repo, path, ref: cfg.branch });
+    if (getRes && getRes.data && getRes.data.sha) existingSha = getRes.data.sha;
+  } catch (e) {
+    // not found -> create
+  }
+
+  const message = `Publish file ${rec.id} via app`;
+  if (existingSha) {
+    await octokit.rest.repos.createOrUpdateFileContents({
+      owner: cfg.owner,
+      repo: cfg.repo,
+      path,
+      message,
+      content: contentB64,
+      branch: cfg.branch,
+      sha: existingSha,
+    });
+  } else {
+    await octokit.rest.repos.createOrUpdateFileContents({
+      owner: cfg.owner,
+      repo: cfg.repo,
+      path,
+      message,
+      content: contentB64,
+      branch: cfg.branch,
+    });
+  }
+
+  let url = null;
+  if (cfg.baseUrl) {
+    url = `${cfg.baseUrl.replace(/\/$/, '')}/${path}`;
+  } else if (`${cfg.repo}`.toLowerCase() === `${cfg.owner.toLowerCase()}.github.io`) {
+    url = `https://${cfg.owner}.github.io/${path}`;
+  } else {
+    url = `https://${cfg.owner}.github.io/${cfg.repo}/${path}`;
+  }
+
+  return { url, path, branch: cfg.branch };
+};
+
 const isVipMemberRecord = (dbUser) => {
   const modalidad = String(dbUser?.modalidad || '').trim().toLowerCase();
   const membership = String(dbUser?.membership || '').trim().toLowerCase();
@@ -379,7 +454,7 @@ router.get('/files', async (req, res) => {
       const rawName = rec.name || rec.filename || rec.file_data || '';
       const slug = (rawName && rawName.toString().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')) || `file-${rec.id}`;
       const preview_url = rec.preview_image_url || rec.preview_url || rec.preview_video_url || rec.preview || rec.supabase_url || null;
-      const html_url = rec.supabase_url || rec.file_url || rec.html_url || null;
+      const html_url = rec.file_url || rec.supabase_url || rec.html_url || null;
       const rawEpago = (rec && typeof rec.epago !== 'undefined' && rec.epago !== null) ? String(rec.epago).trim().toLowerCase() : null;
       const explicitFree = rawEpago === 'gratuito' || rawEpago === 'gratis' || rawEpago === 'free';
       const priceUsd = getVipFilePriceUsd(rec);
@@ -468,7 +543,7 @@ router.get('/file/:id', async (req, res) => {
     const rawName = rec.name || rec.filename || rec.file_data || '';
     const slug = (rawName && rawName.toString().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')) || `file-${rec.id}`;
     const preview_url = rec.preview_image_url || rec.preview_url || rec.preview_video_url || rec.preview || rec.supabase_url || null;
-    const html_url = rec.supabase_url || rec.file_url || rec.html_url || null;
+    const html_url = rec.file_url || rec.supabase_url || rec.html_url || null;
     const rawEpago2 = (rec && typeof rec.epago !== 'undefined' && rec.epago !== null) ? String(rec.epago).trim().toLowerCase() : null;
     const explicitFree2 = rawEpago2 === 'gratuito' || rawEpago2 === 'gratis' || rawEpago2 === 'free';
     const priceUsd2 = getVipFilePriceUsd(rec);
@@ -720,10 +795,16 @@ router.post(
         const safeName = sanitizeStorageObjectName(htmlFile.originalname, 'file');
         const path = `html/${rec.id}_${now}_${safeName}`;
         const publicUrl = await uploadToBucket(path, htmlFile.buffer, htmlFile.mimetype);
+        let githubPage = null;
+        try {
+          githubPage = await publishHtmlToGithubPages(rec, htmlFile.buffer.toString('utf8'));
+        } catch (e) {
+          console.warn('GitHub publish after edit failed:', e?.message || e);
+          return res.status(500).json({ error: 'No se pudo publicar en GitHub Pages al editar el HTML' });
+        }
         updates.file_data = path;
         updates.supabase_url = publicUrl;
-        // If a file was previously published to an external URL, clear it so view/download use the updated storage file.
-        updates.file_url = null;
+        updates.file_url = githubPage?.url || null;
       }
 
       const { data: up, error: upErr } = await supabaseDB.from('html_files').update(updates).eq('id', rec.id).select();
@@ -771,71 +852,14 @@ router.post('/file/:id/publish', async (req, res) => {
       return res.status(403).json({ error: 'Forbidden' });
     }
 
-    // Support both legacy GITHUB_* names and existing GHPAGES_* names in .env
-    const GH_OWNER = process.env.GHPAGES_OWNER || process.env.GITHUB_PAGES_REPO_OWNER || process.env.GH_PAGES_OWNER;
-    const GH_REPO = process.env.GHPAGES_REPO || process.env.GITHUB_PAGES_REPO_NAME || process.env.GH_PAGES_REPO;
-    const GH_TOKEN = process.env.GHPAGES_TOKEN || process.env.GITHUB_TOKEN || process.env.GITHUB_PAGES_TOKEN || process.env.GH_PAGES_TOKEN;
-    if (!GH_OWNER || !GH_REPO || !GH_TOKEN) {
+    const ghCfg = getGithubPagesConfig();
+    if (!ghCfg.owner || !ghCfg.repo || !ghCfg.token) {
       console.error('[publish] github pages config missing owner/repo/token');
       return res.status(500).json({ error: 'GitHub Pages not configured on server' });
     }
 
-    const octokit = new Octokit({ auth: GH_TOKEN });
-
-    // target branch for pages (support GHPAGES_BRANCH or GITHUB_PAGES_BRANCH)
-    const branch = process.env.GHPAGES_BRANCH || process.env.GITHUB_PAGES_BRANCH || 'gh-pages';
-    const filenameSafe = String(rec.name || rec.filename || `file-${rec.id}`).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
-    const path = `${String(rec.id)}-${filenameSafe}.html`;
-
-    // ensure branch exists; if not, create from default branch
-    let branchSha = null;
-    try {
-      const ref = await octokit.rest.git.getRef({ owner: GH_OWNER, repo: GH_REPO, ref: `heads/${branch}` });
-      branchSha = ref.data.object.sha;
-    } catch (e) {
-      // create branch from default
-      const repoInfo = await octokit.rest.repos.get({ owner: GH_OWNER, repo: GH_REPO });
-      const defaultBranch = repoInfo.data.default_branch;
-      const commit = await octokit.rest.repos.getCommit({ owner: GH_OWNER, repo: GH_REPO, ref: defaultBranch });
-      const baseSha = commit.data.sha;
-      await octokit.rest.git.createRef({ owner: GH_OWNER, repo: GH_REPO, ref: `refs/heads/${branch}`, sha: baseSha });
-      branchSha = baseSha;
-    }
-
-    // prepare content
-    const contentB64 = Buffer.from(html, 'utf8').toString('base64');
-
-    // try to get existing file to use sha for update
-    let existingSha = null;
-    try {
-      const getRes = await octokit.rest.repos.getContent({ owner: GH_OWNER, repo: GH_REPO, path, ref: branch });
-      if (getRes && getRes.data && getRes.data.sha) existingSha = getRes.data.sha;
-    } catch (e) {
-      // not found -> create
-    }
-
-    const msg = `Publish file ${rec.id} via app`;
-    if (existingSha) {
-      await octokit.rest.repos.createOrUpdateFileContents({ owner: GH_OWNER, repo: GH_REPO, path, message: msg, content: contentB64, branch, sha: existingSha });
-    } else {
-      await octokit.rest.repos.createOrUpdateFileContents({ owner: GH_OWNER, repo: GH_REPO, path, message: msg, content: contentB64, branch });
-    }
-
-    // construct public URL. Prefer explicit base if provided (GHPAGES_BASE_URL)
-    let publicUrl = null;
-    const baseUrl = (process.env.GHPAGES_BASE_URL || process.env.GITHUB_PAGES_BASE_URL || '').toString().trim();
-    if (baseUrl) {
-      publicUrl = `${baseUrl.replace(/\/$/, '')}/${path}`;
-    } else {
-      // If repo is owner.github.io then path served at /<path>
-      if (`${GH_REPO}`.toLowerCase() === `${GH_OWNER.toLowerCase()}.github.io`) {
-        publicUrl = `https://${GH_OWNER}.github.io/${path}`;
-      } else {
-        publicUrl = `https://${GH_OWNER}.github.io/${GH_REPO}/${path}`;
-      }
-    }
-
-    return res.json({ data: { url: publicUrl } });
+    const published = await publishHtmlToGithubPages(rec, html);
+    return res.json({ data: { url: published.url } });
   } catch (e) {
     console.error('Publish endpoint error:', e);
     return res.status(500).json({ error: (e && e.message) || 'Publish failed' });
@@ -1047,7 +1071,7 @@ router.get('/file/:id/download', async (req, res) => {
     }
 
     // prefer explicit file_url first, then supabase_url
-    let url = rec.supabase_url || rec.file_url || rec.html_url || null;
+    let url = rec.file_url || rec.supabase_url || rec.html_url || null;
     if (!url) return res.status(404).json({ error: 'File URL not found' });
 
     // Decide whether to stream (force download) or redirect.
@@ -1069,6 +1093,7 @@ router.get('/file/:id/download', async (req, res) => {
 
       const contentType = fetchRes.headers.get('content-type') || 'application/octet-stream';
       const contentLength = fetchRes.headers.get('content-length');
+      const htmlByPath = /\.html?(?:$|\?)/i.test(String(streamUrl || '')) || (rec.file_data && /\.html?$/i.test(String(rec.file_data || '')));
 
       // determine filename
       let filename = `file-${id}`;
@@ -1080,8 +1105,12 @@ router.get('/file/:id/download', async (req, res) => {
         if (rec.file_data) filename = rec.file_data.split('/').pop() || filename;
       }
 
+      if (htmlByPath && !/\.html?$/i.test(filename)) {
+        filename = `${String(filename).replace(/\.[^.]+$/, '')}.html`;
+      }
+
       // If HTML, rewrite asset URLs to signed/absolute URLs so the downloaded file works offline
-      if (/text\/html/i.test(contentType)) {
+      if (/text\/html/i.test(contentType) || htmlByPath) {
         try {
           const html = await fetchRes.text();
 
