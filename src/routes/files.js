@@ -62,6 +62,22 @@ const normalizeFileLanguage = (value) => {
   return null;
 };
 
+const sanitizeStorageObjectName = (value, fallback = 'file') => {
+  const input = String(value || '').trim();
+  const extMatch = input.match(/\.[a-zA-Z0-9]{1,10}$/);
+  const ext = extMatch ? extMatch[0].toLowerCase() : '';
+  const base = input.replace(/\.[^.]+$/, '');
+  const normalized = base
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '');
+  const safeBase = normalized
+    .replace(/[^a-zA-Z0-9._-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^[-_.]+|[-_.]+$/g, '');
+  const finalBase = safeBase || fallback;
+  return `${finalBase}${ext}`;
+};
+
 const isVipMemberRecord = (dbUser) => {
   const modalidad = String(dbUser?.modalidad || '').trim().toLowerCase();
   const membership = String(dbUser?.membership || '').trim().toLowerCase();
@@ -701,7 +717,8 @@ router.post(
       }
 
       if (htmlFile) {
-        const path = `html/${rec.id}_${now}_${htmlFile.originalname}`;
+        const safeName = sanitizeStorageObjectName(htmlFile.originalname, 'file');
+        const path = `html/${rec.id}_${now}_${safeName}`;
         const publicUrl = await uploadToBucket(path, htmlFile.buffer, htmlFile.mimetype);
         updates.file_data = path;
         updates.supabase_url = publicUrl;

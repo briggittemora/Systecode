@@ -14,6 +14,22 @@ const normalizeFileLanguage = (value) => {
   return 'es';
 };
 
+const sanitizeStorageObjectName = (value, fallback = 'file') => {
+  const input = String(value || '').trim();
+  const extMatch = input.match(/\.[a-zA-Z0-9]{1,10}$/);
+  const ext = extMatch ? extMatch[0].toLowerCase() : '';
+  const base = input.replace(/\.[^.]+$/, '');
+  const normalized = base
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '');
+  const safeBase = normalized
+    .replace(/[^a-zA-Z0-9._-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^[-_.]+|[-_.]+$/g, '');
+  const finalBase = safeBase || fallback;
+  return `${finalBase}${ext}`;
+};
+
 const isLikelyVideoPreviewUrl = (value) => {
   const text = String(value || '').trim().toLowerCase();
   if (!text) return false;
@@ -99,7 +115,8 @@ router.post('/upload', upload.fields([
     let previewImagePublicUrl = null;
     let previewVideoPublicUrl = null;
     if (previewFile) {
-      const previewPath = `previews/${id}_${previewFile.originalname}`;
+      const previewSafeName = sanitizeStorageObjectName(previewFile.originalname, 'preview');
+      const previewPath = `previews/${id}_${previewSafeName}`;
       try {
         const uploaded = await uploadToBucket(previewPath, previewFile.buffer, previewFile.mimetype);
         if (uploaded) {
@@ -117,7 +134,8 @@ router.post('/upload', upload.fields([
 
     if (thumbnailFile) {
       // optional thumbnail upload (not saved in DB separately here)
-      const thumbPath = `thumbs/${id}_${thumbnailFile.originalname}`;
+      const thumbSafeName = sanitizeStorageObjectName(thumbnailFile.originalname, 'thumb');
+      const thumbPath = `thumbs/${id}_${thumbSafeName}`;
       try {
         await uploadToBucket(thumbPath, thumbnailFile.buffer, thumbnailFile.mimetype);
       } catch (e) {
@@ -126,7 +144,8 @@ router.post('/upload', upload.fields([
     }
 
     // HTML upload
-    const htmlPath = `html/${id}_${htmlFile.originalname}`;
+    const htmlSafeName = sanitizeStorageObjectName(htmlFile.originalname, 'file.html');
+    const htmlPath = `html/${id}_${htmlSafeName}`;
     let htmlPublicUrl = null;
     try {
       htmlPublicUrl = await uploadToBucket(htmlPath, htmlFile.buffer, htmlFile.mimetype);
