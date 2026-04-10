@@ -379,7 +379,7 @@ router.get('/files', async (req, res) => {
       const rawName = rec.name || rec.filename || rec.file_data || '';
       const slug = (rawName && rawName.toString().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')) || `file-${rec.id}`;
       const preview_url = rec.preview_image_url || rec.preview_url || rec.preview_video_url || rec.preview || rec.supabase_url || null;
-      const html_url = rec.file_url || rec.supabase_url || rec.html_url || null;
+      const html_url = rec.supabase_url || rec.file_url || rec.html_url || null;
       const rawEpago = (rec && typeof rec.epago !== 'undefined' && rec.epago !== null) ? String(rec.epago).trim().toLowerCase() : null;
       const explicitFree = rawEpago === 'gratuito' || rawEpago === 'gratis' || rawEpago === 'free';
       const priceUsd = getVipFilePriceUsd(rec);
@@ -468,7 +468,7 @@ router.get('/file/:id', async (req, res) => {
     const rawName = rec.name || rec.filename || rec.file_data || '';
     const slug = (rawName && rawName.toString().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')) || `file-${rec.id}`;
     const preview_url = rec.preview_image_url || rec.preview_url || rec.preview_video_url || rec.preview || rec.supabase_url || null;
-    const html_url = rec.file_url || rec.supabase_url || rec.html_url || null;
+    const html_url = rec.supabase_url || rec.file_url || rec.html_url || null;
     const rawEpago2 = (rec && typeof rec.epago !== 'undefined' && rec.epago !== null) ? String(rec.epago).trim().toLowerCase() : null;
     const explicitFree2 = rawEpago2 === 'gratuito' || rawEpago2 === 'gratis' || rawEpago2 === 'free';
     const priceUsd2 = getVipFilePriceUsd(rec);
@@ -722,6 +722,8 @@ router.post(
         const publicUrl = await uploadToBucket(path, htmlFile.buffer, htmlFile.mimetype);
         updates.file_data = path;
         updates.supabase_url = publicUrl;
+        // If a file was previously published to an external URL, clear it so view/download use the updated storage file.
+        updates.file_url = null;
       }
 
       const { data: up, error: upErr } = await supabaseDB.from('html_files').update(updates).eq('id', rec.id).select();
@@ -1045,7 +1047,7 @@ router.get('/file/:id/download', async (req, res) => {
     }
 
     // prefer explicit file_url first, then supabase_url
-    let url = rec.file_url || rec.supabase_url || rec.html_url || null;
+    let url = rec.supabase_url || rec.file_url || rec.html_url || null;
     if (!url) return res.status(404).json({ error: 'File URL not found' });
 
     // Decide whether to stream (force download) or redirect.
