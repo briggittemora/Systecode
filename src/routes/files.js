@@ -1078,16 +1078,19 @@ router.get('/file/:id/download', async (req, res) => {
     const looksLikeHtml = (u) => /\.html?(?:$|\?)/i.test(String(u || '')) || (rec.file_data && /\.html?$/i.test(rec.file_data));
 
     // Helper to stream a URL (fetch and pipe to response with Content-Disposition)
-    const streamUrlAsAttachment = async (streamUrl) => {
+    const streamUrlAsAttachment = async (streamUrl, options = {}) => {
+      const { suppressHttpErrors = false } = options;
       let fetchRes;
       try {
         fetchRes = await fetch(streamUrl);
       } catch (err) {
         console.error('Failed to fetch file for streaming:', err);
+        if (suppressHttpErrors) throw err;
         return res.status(502).json({ error: 'Failed to fetch file from storage' });
       }
       if (!fetchRes.ok) {
         console.error('Fetch returned non-ok status for', streamUrl, fetchRes.status);
+        if (suppressHttpErrors) throw new Error(`Fetch returned status ${fetchRes.status}`);
         return res.status(502).json({ error: 'Failed to fetch file from storage' });
       }
 
@@ -1234,7 +1237,20 @@ router.get('/file/:id/download', async (req, res) => {
 
     // If URL is absolute and looks like HTML -> stream to force download
     if (/^https?:\/\//i.test(url) && looksLikeHtml(url)) {
-      return await streamUrlAsAttachment(url);
+      try {
+        return await streamUrlAsAttachment(url, { suppressHttpErrors: true });
+      } catch (primaryErr) {
+        const fallbackUrl = rec.supabase_url && rec.supabase_url !== url ? rec.supabase_url : null;
+        if (fallbackUrl) {
+          console.warn('Primary HTML download source failed, trying supabase_url fallback:', primaryErr?.message || primaryErr);
+          try {
+            return await streamUrlAsAttachment(fallbackUrl, { suppressHttpErrors: true });
+          } catch (fallbackErr) {
+            console.error('Fallback HTML download source failed:', fallbackErr?.message || fallbackErr);
+          }
+        }
+        return res.status(502).json({ error: 'Failed to fetch file from storage' });
+      }
     }
 
     // Otherwise generate signed URL if needed
