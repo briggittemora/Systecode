@@ -18,8 +18,10 @@ const ensureUserRouter = require('./routes/ensureUser');
 
 const app = express();
 
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+const BODY_LIMIT = process.env.BODY_LIMIT || '10mb';
+
+app.use(express.json({ limit: BODY_LIMIT }));
+app.use(express.urlencoded({ extended: true, limit: BODY_LIMIT }));
 
 // Simple request logger to help debug missing routes
 app.use((req, res, next) => {
@@ -109,5 +111,17 @@ if (distPath) {
     res.json({ status: 'ok', message: 'Backend SysteCode' });
   });
 }
+
+// Normalize body-parser 413 errors to JSON for frontend clients.
+app.use((err, req, res, next) => {
+  if (err && (err.type === 'entity.too.large' || err.status === 413)) {
+    return res.status(413).json({
+      error: 'Payload Too Large',
+      message: `El contenido enviado excede el limite permitido (${BODY_LIMIT}).`,
+      code: 'PAYLOAD_TOO_LARGE',
+    });
+  }
+  return next(err);
+});
 
 module.exports = app;
