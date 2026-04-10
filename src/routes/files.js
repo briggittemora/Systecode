@@ -87,7 +87,7 @@ const getGithubPagesConfig = () => {
   return { owner, repo, token, branch, baseUrl };
 };
 
-const publishHtmlToGithubPages = async (rec, html) => {
+const publishHtmlToGithubPages = async (rec, html, preferredFilename = null) => {
   const cfg = getGithubPagesConfig();
   if (!cfg.owner || !cfg.repo || !cfg.token) {
     throw new Error('GitHub Pages not configured on server');
@@ -98,7 +98,20 @@ const publishHtmlToGithubPages = async (rec, html) => {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/(^-|-$)/g, '');
-  const path = `${String(rec.id)}-${filenameSafe}.html`;
+  const customNameRaw = String(preferredFilename || '').trim().toLowerCase();
+  let path;
+  if (customNameRaw) {
+    const customNameSafe = customNameRaw
+      .replace(/[^a-z0-9._-]+/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^[-_.]+|[-_.]+$/g, '');
+    const withExt = /\.html?$/i.test(customNameSafe)
+      ? customNameSafe
+      : `${customNameSafe || `file-${rec.id}-${Date.now()}`}.html`;
+    path = `${String(rec.id)}-${withExt}`;
+  } else {
+    path = `${String(rec.id)}-${filenameSafe}.html`;
+  }
 
   try {
     await octokit.rest.git.getRef({ owner: cfg.owner, repo: cfg.repo, ref: `heads/${cfg.branch}` });
@@ -822,7 +835,7 @@ router.post(
 router.post('/file/:id/publish', async (req, res) => {
   try {
     const { id } = req.params;
-    const { html } = req.body || {};
+    const { html, filename } = req.body || {};
     if (!html) {
       console.warn('[publish] missing html in body id=', id);
       return res.status(400).json({ error: 'Missing html in body' });
@@ -858,7 +871,37 @@ router.post('/file/:id/publish', async (req, res) => {
       return res.status(500).json({ error: 'GitHub Pages not configured on server' });
     }
 
-    const published = await publishHtmlToGithubPages(rec, html);
+    const published = await publishHtmlToGithubPages(rec, html, filename);
+    try {
+      await supabaseDB
+        .from('html_files')
+        .update({ file_url: published.url })
+        .eq('id', rec.id);
+    } catch (persistErr) {
+      console.warn('[publish] failed to persist file_url for id=', rec.id, persistErr?.message || persistErr);
+    }
+
+    try {
+      const customizationPayload = {
+        user_id: dbUser?.id || null,
+        supabase_user_id: user?.id || null,
+        user_email: user?.email || null,
+        original_file_id: rec.id,
+        original_file_name: rec.name || rec.filename || null,
+        published_url: published.url,
+        published_path: published.path || null,
+        source_filename: filename || null,
+      };
+      const { error: customErr } = await supabaseDB
+        .from('user_file_customizations')
+        .insert([customizationPayload]);
+      if (customErr) {
+        console.warn('[publish] personalization history insert failed:', customErr?.message || customErr);
+      }
+    } catch (historyErr) {
+      console.warn('[publish] personalization history exception:', historyErr?.message || historyErr);
+    }
+
     return res.json({ data: { url: published.url } });
   } catch (e) {
     console.error('Publish endpoint error:', e);

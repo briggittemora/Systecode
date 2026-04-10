@@ -303,6 +303,83 @@ router.get('/me/files', async (req, res) => {
   }
 });
 
+router.get('/me/customizations', async (req, res) => {
+  try {
+    const user = await getAuthUser(req, res);
+    if (!user) return;
+    if (!ensureSupabaseConfigured(res)) return;
+
+    const email = user.email || null;
+    const userId = user.id || null;
+    const { row: dbUser } = email ? await getUserRowByEmail(email) : { row: null };
+    const dbUserId = dbUser?.id || null;
+
+    const mergedById = new Map();
+    const pushRows = (rows) => {
+      (rows || []).forEach((r) => {
+        if (!r || typeof r.id === 'undefined' || r.id === null) return;
+        mergedById.set(String(r.id), r);
+      });
+    };
+
+    if (dbUserId) {
+      const { data: byUserId, error: byUserIdErr } = await supabaseDB
+        .from('user_file_customizations')
+        .select('*')
+        .eq('user_id', dbUserId)
+        .order('created_at', { ascending: false });
+      if (byUserIdErr) {
+        console.error('[profile] /me/customizations by user_id error:', byUserIdErr);
+      } else {
+        pushRows(byUserId);
+      }
+    }
+
+    if (email) {
+      const { data: byEmail, error: byEmailErr } = await supabaseDB
+        .from('user_file_customizations')
+        .select('*')
+        .eq('user_email', email)
+        .order('created_at', { ascending: false });
+      if (byEmailErr) {
+        console.error('[profile] /me/customizations by email error:', byEmailErr);
+      } else {
+        pushRows(byEmail);
+      }
+    }
+
+    if (userId) {
+      const { data: bySupabaseId, error: bySupabaseIdErr } = await supabaseDB
+        .from('user_file_customizations')
+        .select('*')
+        .eq('supabase_user_id', userId)
+        .order('created_at', { ascending: false });
+      if (bySupabaseIdErr) {
+        console.error('[profile] /me/customizations by supabase_user_id error:', bySupabaseIdErr);
+      } else {
+        pushRows(bySupabaseId);
+      }
+    }
+
+    const mapped = Array.from(mergedById.values())
+      .sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime())
+      .map((rec) => ({
+        id: rec.id,
+        original_file_id: rec.original_file_id || null,
+        original_file_name: rec.original_file_name || null,
+        published_url: rec.published_url || null,
+        published_path: rec.published_path || null,
+        source_filename: rec.source_filename || null,
+        created_at: rec.created_at || null,
+      }));
+
+    return res.json({ data: mapped });
+  } catch (e) {
+    console.error('GET /api/me/customizations error:', e?.message || e);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 router.get('/me/stats', async (req, res) => {
   try {
     const user = await getAuthUser(req, res);
