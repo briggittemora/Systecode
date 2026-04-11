@@ -1151,8 +1151,15 @@ router.get('/file/:id/download', async (req, res) => {
         if (rec.file_data) filename = rec.file_data.split('/').pop() || filename;
       }
 
-      if (htmlByPath && !/\.html?$/i.test(filename)) {
-        filename = `${String(filename).replace(/\.[^.]+$/, '')}.html`;
+      if (htmlByPath) {
+        const rawName = String(filename || `file-${id}`).trim();
+        if (/\.htm$/i.test(rawName)) {
+          filename = `${rawName.slice(0, -4)}.html`;
+        } else if (!/\.html$/i.test(rawName)) {
+          filename = `${rawName.replace(/\.[^.]+$/, '')}.html`;
+        } else {
+          filename = rawName;
+        }
       }
 
       // If HTML, rewrite asset URLs to signed/absolute URLs so the downloaded file works offline
