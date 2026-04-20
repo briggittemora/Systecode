@@ -872,14 +872,6 @@ router.post('/file/:id/publish', async (req, res) => {
     }
 
     const published = await publishHtmlToGithubPages(rec, html, filename);
-    try {
-      await supabaseDB
-        .from('html_files')
-        .update({ file_url: published.url })
-        .eq('id', rec.id);
-    } catch (persistErr) {
-      console.warn('[publish] failed to persist file_url for id=', rec.id, persistErr?.message || persistErr);
-    }
 
     try {
       const customizationPayload = {
