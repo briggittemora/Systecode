@@ -14,7 +14,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
     <!-- SEO -->
-    <title>Plantillas HTML Gratuitas para Descargar | Archivos Románticos y Dedicatorias - SysteCode</title>
+    <title>Plantillas HTML Gratis para Descargar | Webs Románticas y Dedicatorias - SysteCode</title>
 
     <meta name="description" content="Descarga plantillas HTML gratis listas para usar: páginas románticas para dedicar, dashboards modernos, portfolios y más. Código limpio, editable y responsive." />
     
@@ -23,12 +23,61 @@
     <meta name="robots" content="index, follow" />
     <meta name="author" content="SysteCode" />
 
-    <!-- Open Graph (para redes sociales) -->
+    <!-- Open Graph -->
     <meta property="og:title" content="Plantillas HTML Gratis para Descargar | SysteCode" />
     <meta property="og:description" content="Descarga páginas románticas, dashboards y más. Listas para usar y editar fácilmente." />
     <meta property="og:image" content="https://codigossyste.onrender.com/Systecode.png" />
     <meta property="og:url" content="https://codigossyste.onrender.com/" />
     <meta property="og:type" content="website" />
+
+    <!-- Estilos SEO visibles -->
+    <style>
+      .prerender-seo {
+        max-width: 960px;
+        margin: 20px auto;
+        padding: 16px 20px;
+        border-radius: 10px;
+        text-align: center;
+        font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial;
+        color: #111;
+      }
+
+      .prerender-seo h1 {
+        font-size: 1.8rem;
+        margin-bottom: 8px;
+      }
+
+      .prerender-seo p {
+        color: #444;
+        margin-bottom: 10px;
+      }
+
+      .prerender-seo ul {
+        text-align: left;
+        display: inline-block;
+        margin-top: 10px;
+      }
+
+      .prerender-seo a {
+        display: inline-block;
+        margin-top: 12px;
+        padding: 10px 16px;
+        background: #ff4d6d;
+        color: #fff;
+        border-radius: 6px;
+        text-decoration: none;
+        font-weight: 500;
+      }
+
+      @media (prefers-color-scheme: dark) {
+        .prerender-seo {
+          color: #ddd;
+        }
+        .prerender-seo p {
+          color: #aaa;
+        }
+      }
+    </style>
 
     <!-- Tema inicial -->
     <script>
@@ -53,9 +102,30 @@
   </head>
 
   <body>
+
+    <!-- CONTENIDO SEO (VISIBLE PARA GOOGLE Y USUARIOS AL INICIO) -->
+    <div id="prerender-seo" class="prerender-seo">
+      <h1>Plantillas HTML gratis para descargar</h1>
+      <p>
+        Descarga plantillas HTML gratis: páginas románticas para dedicar, dashboards modernos,
+        portfolios y cartas de amor HTML. Todo listo para usar, personalizar y compartir.
+      </p>
+
+      <h2>Categorías populares</h2>
+      <ul>
+        <li>Páginas románticas y dedicatorias 💖</li>
+        <li>Dashboards administrativos 📊</li>
+        <li>Portfolios modernos 🌐</li>
+        <li>Cartas de amor HTML ✉️</li>
+      </ul>
+
+      <a href="/">Ver plantillas</a>
+    </div>
+
+    <!-- REACT -->
     <div id="root"></div>
 
-    <!-- Script de anuncios (solo escritorio) -->
+    <!-- Script anuncios -->
     <script>
       (function () {
         try {
@@ -72,12 +142,29 @@
           s.dataset.zone = '10886985';
           s.src = 'https://nap5k.com/tag.min.js';
           target.appendChild(s);
-        } catch (e) {
-          // error ignorado
-        }
+        } catch (e) {}
+      })();
+    </script>
+
+    <!-- Script SEO (NO elimina rápido para que Google lo lea) -->
+    <script>
+      (function(){
+        try{
+          var seo = document.getElementById('prerender-seo');
+          var root = document.getElementById('root');
+
+          if(!seo || !root) return;
+
+          setTimeout(function(){
+            if(root.children.length > 0 && seo){
+              seo.remove();
+            }
+          }, 3000); // espera 3 segundos
+        }catch(e){}
       })();
     </script>
 
     <!-- React -->
+
   </body>
 </html>
