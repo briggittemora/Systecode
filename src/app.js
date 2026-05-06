@@ -7,6 +7,7 @@ const fs = require('fs');
 const filesRouter = require('./routes/files');
 const uploadRouter = require('./routes/upload');
 const archivosRouter = require('./routes/archivos');
+const seoRouter = require('./routes/seo');
 const membershipRouter = require('./routes/membership');
 const meRouter = require('./routes/me');
 const purchasesRouter = require('./routes/purchases');
@@ -93,6 +94,9 @@ app.use('/api', paypalRouter);
 app.use('/api/profile', profileRouter);
 app.use('/api', configRouter);
 app.use('/api', ensureUserRouter);
+
+// SEO helpers: robots, sitemap and simple prerender routes
+app.use(seoRouter);
 
 if (distPath) {
   app.use(express.static(distPath));
