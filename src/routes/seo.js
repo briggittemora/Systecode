@@ -85,17 +85,31 @@ router.get('/archivos/:slug/:id', async (req, res, next) => {
       if (data.preview_url) image = data.preview_url;
     }
 
-    // try to read SPA index.html to inject head
-    const frontendIndex = path.resolve(__dirname, '..', '..', 'frontend', 'dist', 'index.html');
+    // try to read SPA index.html from likely dist locations (backend/dist, root dist, frontend/dist)
+    const candidateIndexPaths = [
+      path.resolve(__dirname, '..', 'dist', 'index.html'), // backend/dist
+      path.resolve(__dirname, '..', '..', 'dist', 'index.html'), // root dist
+      path.resolve(__dirname, '..', '..', 'frontend', 'dist', 'index.html'), // frontend/dist
+    ];
+
     let html = `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(title)}</title><meta name="description" content="${escapeHtml(description)}"><meta property="og:title" content="${escapeHtml(title)}"><meta property="og:description" content="${escapeHtml(description)}"><meta property="og:image" content="${escapeHtml(image)}"><link rel="canonical" href="${req.protocol}://${req.get('host')}${req.originalUrl}"></head><body><h1>${escapeHtml(title)}</h1><p>${escapeHtml(description)}</p></body></html>`;
     try {
-      if (fs.existsSync(frontendIndex)) {
-        html = fs.readFileSync(frontendIndex, 'utf8');
+      let found = null;
+      for (const p of candidateIndexPaths) {
+        if (fs.existsSync(p)) {
+          found = p;
+          break;
+        }
+      }
+      if (found) {
+        html = fs.readFileSync(found, 'utf8');
         // inject/replace simple tags
         html = html.replace(/<title>.*<\/title>/i, `<title>${escapeHtml(title)}</title>`);
         html = html.replace(/<meta\s+name="description"\s+content="[^"]*"\s*\/?>/i, `<meta name="description" content="${escapeHtml(description)}" />`);
         // add og tags if not present
         if (!/property="og:title"/i.test(html)) html = html.replace('</head>', `<meta property="og:title" content="${escapeHtml(title)}" />\n<meta property="og:description" content="${escapeHtml(description)}" />\n<meta property="og:image" content="${escapeHtml(image)}" />\n</head>`);
+      } else {
+        console.warn('[seo] no frontend index.html found in candidate paths, returning minimal SEO HTML');
       }
     } catch (e) {
       console.warn('[seo] failed to read frontend index:', e?.message || e);
