@@ -62,6 +62,61 @@ const normalizeFileLanguage = (value) => {
   return null;
 };
 
+const assetExtensions = {
+  image: ['avif', 'bmp', 'gif', 'jpe?g', 'png', 'svg', 'webp', 'ico'],
+  audio: ['mp3', 'm4a', 'aac', 'wav', 'ogg', 'oga', 'flac'],
+};
+
+const collectAssetUrls = (contentStr, kind) => {
+  try {
+    const source = String(contentStr || '');
+    const extensions = assetExtensions[kind] || [];
+    if (extensions.length === 0) return [];
+
+    const extGroup = extensions.join('|');
+    const found = new Set();
+    const pushMatch = (value) => {
+      if (!value) return;
+      const cleaned = String(value).trim().replace(/[),.;]+$/g, '');
+      if (!cleaned) return;
+      found.add(cleaned);
+    };
+
+    const patterns = [
+      new RegExp(`(?:src|href|data-src|poster)=(['"])([^'"\\s>]+\\.(?:${extGroup})(?:\\?[^'"\\s>]*)?)\\1`, 'gi'),
+      new RegExp(`url\\((['"]?)([^'")\\s>]+\\.(?:${extGroup})(?:\\?[^'")\\s>]*)?)\\1\\)`, 'gi'),
+      new RegExp(`(['"])(https?:\\/\\/[^'"]+\\.(?:${extGroup})(?:\\?[^'"]*)?)\\1`, 'gi'),
+      new RegExp(`(https?:\\/\\/[^\\s'"<>]+\\.(?:${extGroup})(?:\\?[^\\s'"<>]*)?)`, 'gi'),
+    ];
+
+    for (const pattern of patterns) {
+      let match;
+      while ((match = pattern.exec(source)) !== null) {
+        pushMatch(match[2] || match[1] || match[0]);
+      }
+    }
+
+    return Array.from(found);
+  } catch {
+    return [];
+  }
+};
+
+const fetchTextWithTimeout = async (url, timeoutMs = 2500) => {
+  if (!url || !/^https?:\/\//i.test(String(url))) return null;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const resp = await fetch(url, { signal: controller.signal });
+    if (!resp.ok) return null;
+    return await resp.text();
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+};
+
 const sanitizeStorageObjectName = (value, fallback = 'file') => {
   const input = String(value || '').trim();
   const extMatch = input.match(/\.[a-zA-Z0-9]{1,10}$/);
@@ -557,6 +612,9 @@ router.get('/file/:id', async (req, res) => {
     const slug = (rawName && rawName.toString().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')) || `file-${rec.id}`;
     const preview_url = rec.preview_image_url || rec.preview_url || rec.preview_video_url || rec.preview || rec.supabase_url || null;
     const html_url = rec.file_url || rec.supabase_url || rec.html_url || null;
+    const htmlSource = await fetchTextWithTimeout(html_url);
+    const detectedImages = collectAssetUrls(htmlSource, 'image');
+    const detectedAudio = collectAssetUrls(htmlSource, 'audio');
     const rawEpago2 = (rec && typeof rec.epago !== 'undefined' && rec.epago !== null) ? String(rec.epago).trim().toLowerCase() : null;
     const explicitFree2 = rawEpago2 === 'gratuito' || rawEpago2 === 'gratis' || rawEpago2 === 'free';
     const priceUsd2 = getVipFilePriceUsd(rec);
@@ -575,6 +633,10 @@ router.get('/file/:id', async (req, res) => {
       preview_url,
       preview_image_url: rec.preview_image_url || null,
       preview_video_url: rec.preview_video_url || null,
+      detected_assets: {
+        images: detectedImages,
+        audio: detectedAudio,
+      },
       tutorial_url: rec.tutorial_url || null,
       tutorial_title: rec.tutorial_title || null,
       html_url,
