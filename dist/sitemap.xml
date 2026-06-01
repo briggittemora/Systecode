@@ -5,6 +5,30 @@
     <priority>1.0</priority>
   </url>
   <url>
+    <loc>https://codigossyste.onrender.com/categorias/gratis</loc>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://codigossyste.onrender.com/categorias/vip</loc>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://codigossyste.onrender.com/categorias/amor</loc>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://codigossyste.onrender.com/categorias/amistad</loc>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://codigossyste.onrender.com/categorias/romance</loc>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://codigossyste.onrender.com/categorias/otro</loc>
+    <priority>0.8</priority>
+  </url>
+  <url>
     <loc>https://codigossyste.onrender.com/upload</loc>
     <priority>0.5</priority>
   </url>
