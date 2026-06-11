@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://codigossyste.onrender.com/sitemap.xml
