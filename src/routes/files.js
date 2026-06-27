@@ -63,6 +63,47 @@ const normalizeFileLanguage = (value) => {
   return null;
 };
 
+const tryFindFileByIdOrSlug = async (id) => {
+  const rawId = String(id || '').trim();
+  if (!rawId) return null;
+
+  const candidates = [];
+  const numericId = rawId.match(/^\d+$/) ? rawId : null;
+  const prefixedIdMatch = rawId.match(/^file-(\d+)$/i);
+  const prefixedId = prefixedIdMatch ? prefixedIdMatch[1] : null;
+
+  if (numericId) candidates.push(numericId);
+  if (prefixedId && prefixedId !== numericId) candidates.push(prefixedId);
+
+  for (const candidate of candidates) {
+    try {
+      const { data, error } = await supabaseDB.from('html_files').select('*').eq('id', candidate).limit(1).single();
+      if (!error && data) return data;
+    } catch (e) {
+      // continue to fallback options
+    }
+  }
+
+  // Fallback: support legacy slug style if there is an id-like string that may have been stored as a slug.
+  if (rawId && rawId.length > 0 && !numericId) {
+    try {
+      const { data, error } = await supabaseDB.from('html_files').select('*');
+      if (!error && Array.isArray(data)) {
+        const found = data.find((record) => {
+          const filename = String(record.name || record.filename || record.file_data || '').toLowerCase();
+          const slug = filename.replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+          return slug === rawId.toLowerCase();
+        });
+        if (found) return found;
+      }
+    } catch (e) {
+      // ignore fallback exceptions
+    }
+  }
+
+  return null;
+};
+
 const assetExtensions = {
   image: ['avif', 'bmp', 'gif', 'jpe?g', 'png', 'svg', 'webp', 'ico'],
   audio: ['mp3', 'm4a', 'aac', 'wav', 'ogg', 'oga', 'flac'],
