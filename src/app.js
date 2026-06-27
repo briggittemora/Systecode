@@ -80,7 +80,9 @@ const limiter = rateLimit({
     code: 'TOO_MANY_REQUESTS',
   },
 });
-app.use(limiter);
+
+// Apply rate limiting only to API routes to avoid limiting static assets or SPA root page.
+app.use('/api', limiter);
 
 // Serve built frontend (Vite) when available.
 // Prefer backend/dist, then dist/ at repo root, then frontend/dist.
