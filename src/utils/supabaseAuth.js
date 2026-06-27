@@ -1,4 +1,5 @@
 const { supabaseDB } = require('../supabaseClient');
+const { withSupabaseRetry } = require('./supabaseRetry');
 
 function getBearerToken(req) {
   const header = req.headers.authorization || req.headers.Authorization;
@@ -12,7 +13,11 @@ async function getSupabaseUserFromRequest(req) {
   if (!token) return { user: null, token: null, error: 'missing_token' };
 
   try {
-    const { data, error } = await supabaseDB.auth.getUser(token);
+    const { data, error } = await withSupabaseRetry(async () => supabaseDB.auth.getUser(token), {
+      attempts: 3,
+      baseDelayMs: 250,
+      logPrefix: '[supabase-auth]',
+    });
     if (error) return { user: null, token, error: error.message || 'invalid_token' };
     return { user: data?.user || null, token, error: null };
   } catch (e) {
@@ -23,7 +28,11 @@ async function getSupabaseUserFromRequest(req) {
 async function getUserRowByEmail(email) {
   if (!email) return { row: null, error: 'missing_email' };
   try {
-    const { data, error } = await supabaseDB.from('users').select('*').eq('email', email).limit(1);
+    const { data, error } = await withSupabaseRetry(async () => supabaseDB.from('users').select('*').eq('email', email).limit(1), {
+      attempts: 3,
+      baseDelayMs: 250,
+      logPrefix: '[supabase-user-row]',
+    });
     if (error) return { row: null, error: error.message || String(error) };
     return { row: (data && data[0]) || null, error: null };
   } catch (e) {

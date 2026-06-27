@@ -3,6 +3,7 @@ const multer = require('multer');
 const { supabaseDB, supabaseStorage, SUPABASE_STORAGE_BUCKET } = require('../supabaseClient');
 const { getSupabaseUserFromRequest, getUserRowByEmail } = require('../utils/supabaseAuth');
 const { sanitizeHtmlContent, sanitizeUrl } = require('../utils/security');
+const { withSupabaseRetry } = require('../utils/supabaseRetry');
 const cloudinary = require('cloudinary').v2;
 const { Octokit } = require('@octokit/rest');
 
@@ -77,7 +78,11 @@ const tryFindFileByIdOrSlug = async (id) => {
 
   for (const candidate of candidates) {
     try {
-      const { data, error } = await supabaseDB.from('html_files').select('*').eq('id', candidate).limit(1).single();
+      const { data, error } = await withSupabaseRetry(async () => supabaseDB.from('html_files').select('*').eq('id', candidate).limit(1).single(), {
+        attempts: 3,
+        baseDelayMs: 250,
+        logPrefix: '[files-lookup]',
+      });
       if (!error && data) return data;
     } catch (e) {
       // continue to fallback options
@@ -87,7 +92,11 @@ const tryFindFileByIdOrSlug = async (id) => {
   // Fallback: support legacy slug style if there is an id-like string that may have been stored as a slug.
   if (rawId && rawId.length > 0 && !numericId) {
     try {
-      const { data, error } = await supabaseDB.from('html_files').select('*');
+      const { data, error } = await withSupabaseRetry(async () => supabaseDB.from('html_files').select('*'), {
+        attempts: 3,
+        baseDelayMs: 250,
+        logPrefix: '[files-lookup-slug]',
+      });
       if (!error && Array.isArray(data)) {
         const found = data.find((record) => {
           const filename = String(record.name || record.filename || record.file_data || '').toLowerCase();
@@ -617,7 +626,13 @@ router.get('/files', async (req, res) => {
 router.get('/file/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const rec = await tryFindFileByIdOrSlug(id);
+    let rec = null;
+    try {
+      rec = await tryFindFileByIdOrSlug(id);
+    } catch (e) {
+      console.error('[files] /file lookup failed:', e?.message || e);
+      return res.status(503).json({ error: 'Service temporarily unavailable' });
+    }
     if (!rec) return res.status(404).json({ error: 'Not found' });
     const filename = rec.name || rec.filename || rec.file_url || '';
     const rawName = rec.name || rec.filename || rec.file_data || '';

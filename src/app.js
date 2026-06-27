@@ -21,6 +21,7 @@ const ensureUserRouter = require('./routes/ensureUser');
 
 const app = express();
 app.disable('x-powered-by');
+app.set('trust proxy', 1);
 
 const BODY_LIMIT = process.env.BODY_LIMIT || '10mb';
 

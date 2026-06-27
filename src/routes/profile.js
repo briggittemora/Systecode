@@ -2,6 +2,7 @@ const express = require('express');
 const { supabaseDB } = require('../supabaseClient');
 const { getSupabaseUserFromRequest, getUserRowByEmail } = require('../utils/supabaseAuth');
 const { sanitizeUrl } = require('../utils/security');
+const { withSupabaseRetry } = require('../utils/supabaseRetry');
 
 const router = express.Router();
 
@@ -258,11 +259,15 @@ router.get('/me/files', async (req, res) => {
     if (dbUserErr || !dbUser || !dbUser.id) return res.json({ data: [] });
     const dbUserId = dbUser.id;
 
-    const { data, error } = await supabaseDB
+    const { data, error } = await withSupabaseRetry(async () => supabaseDB
       .from('html_files')
       .select('*')
       .eq('user_id', dbUserId)
-      .order('created_at', { ascending: false });
+      .order('created_at', { ascending: false }), {
+      attempts: 3,
+      baseDelayMs: 250,
+      logPrefix: '[profile-me-files]',
+    });
 
     if (error) {
       console.error('[profile] /me/files error:', error);
@@ -324,11 +329,15 @@ router.get('/me/customizations', async (req, res) => {
     };
 
     if (dbUserId) {
-      const { data: byUserId, error: byUserIdErr } = await supabaseDB
+      const { data: byUserId, error: byUserIdErr } = await withSupabaseRetry(async () => supabaseDB
         .from('user_file_customizations')
         .select('*')
         .eq('user_id', dbUserId)
-        .order('created_at', { ascending: false });
+        .order('created_at', { ascending: false }), {
+        attempts: 3,
+        baseDelayMs: 250,
+        logPrefix: '[profile-customizations]',
+      });
       if (byUserIdErr) {
         console.error('[profile] /me/customizations by user_id error:', byUserIdErr);
       } else {
@@ -337,11 +346,15 @@ router.get('/me/customizations', async (req, res) => {
     }
 
     if (email) {
-      const { data: byEmail, error: byEmailErr } = await supabaseDB
+      const { data: byEmail, error: byEmailErr } = await withSupabaseRetry(async () => supabaseDB
         .from('user_file_customizations')
         .select('*')
         .eq('user_email', email)
-        .order('created_at', { ascending: false });
+        .order('created_at', { ascending: false }), {
+        attempts: 3,
+        baseDelayMs: 250,
+        logPrefix: '[profile-customizations]',
+      });
       if (byEmailErr) {
         console.error('[profile] /me/customizations by email error:', byEmailErr);
       } else {
@@ -350,11 +363,15 @@ router.get('/me/customizations', async (req, res) => {
     }
 
     if (userId) {
-      const { data: bySupabaseId, error: bySupabaseIdErr } = await supabaseDB
+      const { data: bySupabaseId, error: bySupabaseIdErr } = await withSupabaseRetry(async () => supabaseDB
         .from('user_file_customizations')
         .select('*')
         .eq('supabase_user_id', userId)
-        .order('created_at', { ascending: false });
+        .order('created_at', { ascending: false }), {
+        attempts: 3,
+        baseDelayMs: 250,
+        logPrefix: '[profile-customizations]',
+      });
       if (bySupabaseIdErr) {
         console.error('[profile] /me/customizations by supabase_user_id error:', bySupabaseIdErr);
       } else {
@@ -395,10 +412,14 @@ router.get('/me/stats', async (req, res) => {
     }
     const dbUserId = dbUser.id;
 
-    const { data, error } = await supabaseDB
+    const { data, error } = await withSupabaseRetry(async () => supabaseDB
       .from('html_files')
       .select('id,downloads')
-      .eq('user_id', dbUserId);
+      .eq('user_id', dbUserId), {
+      attempts: 3,
+      baseDelayMs: 250,
+      logPrefix: '[profile-me-stats]',
+    });
 
     if (error) {
       console.error('[profile] /me/stats error:', error);
@@ -412,10 +433,14 @@ router.get('/me/stats', async (req, res) => {
     let totalLikes = 0;
     if (ids.length > 0) {
       try {
-        const likesRes = await supabaseDB
+        const likesRes = await withSupabaseRetry(async () => supabaseDB
           .from('file_likes')
           .select('file_id', { count: 'exact', head: true })
-          .in('file_id', ids);
+          .in('file_id', ids), {
+          attempts: 3,
+          baseDelayMs: 250,
+          logPrefix: '[profile-me-stats-likes]',
+        });
         totalLikes = likesRes?.count || 0;
       } catch (e) {
         console.error('[profile] /me/stats likes error:', e?.message || e);
