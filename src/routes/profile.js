@@ -1,6 +1,7 @@
 const express = require('express');
 const { supabaseDB } = require('../supabaseClient');
 const { getSupabaseUserFromRequest, getUserRowByEmail } = require('../utils/supabaseAuth');
+const { sanitizeUrl } = require('../utils/security');
 
 const router = express.Router();
 
@@ -271,8 +272,8 @@ router.get('/me/files', async (req, res) => {
     const mapped = (data || []).map((rec) => {
       const rawName = rec.name || rec.filename || rec.file_data || '';
       const slug = (rawName && rawName.toString().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')) || `file-${rec.id}`;
-      const preview_url = rec.preview_image_url || rec.preview_url || rec.preview_video_url || rec.preview || rec.supabase_url || null;
-      const html_url = rec.file_url || rec.supabase_url || rec.html_url || null;
+      const preview_url = sanitizeUrl(rec.preview_image_url || rec.preview_url || rec.preview_video_url || rec.preview || rec.supabase_url || null);
+      const html_url = sanitizeUrl(rec.html_url || rec.file_url || rec.supabase_url || null);
       const priceUsd = parsePriceUsd(rec);
       const explicitFree = String(rec?.epago || '').trim().toLowerCase() === 'gratuito' || String(rec?.epago || '').trim().toLowerCase() === 'gratis' || String(rec?.epago || '').trim().toLowerCase() === 'free';
       const isVip = !explicitFree && isVipRecord(rec);

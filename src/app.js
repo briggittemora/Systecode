@@ -3,6 +3,8 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
 
 const filesRouter = require('./routes/files');
 const uploadRouter = require('./routes/upload');
@@ -18,11 +20,21 @@ const configRouter = require('./routes/config');
 const ensureUserRouter = require('./routes/ensureUser');
 
 const app = express();
+app.disable('x-powered-by');
 
 const BODY_LIMIT = process.env.BODY_LIMIT || '10mb';
 
 app.use(express.json({ limit: BODY_LIMIT }));
-app.use(express.urlencoded({ extended: true, limit: BODY_LIMIT }));
+app.use(express.urlencoded({ extended: true, limit: BODY_LIMIT, parameterLimit: 1000 }));
+
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('X-DNS-Prefetch-Control', 'off');
+  res.setHeader('X-Permitted-Cross-Domain-Policies', 'none');
+  next();
+});
 
 // Simple request logger to help debug missing routes
 app.use((req, res, next) => {
@@ -40,20 +52,35 @@ const CLIENT_URL_PROD = process.env.CLIENT_URL_PROD || null;
 const allowedOrigins = [CLIENT_URL_PROD, CLIENT_URL_DEV, 'http://localhost:5173', 'http://127.0.0.1:5173']
   .filter(Boolean);
 
-// Apply CORS middleware that allows both dev and prod origins. If origin is not
-// in the allow list, respond without CORS headers instead of throwing an error.
+// Security middleware
+app.use(helmet({
+  crossOriginEmbedderPolicy: false,
+  contentSecurityPolicy: false,
+}));
+
 app.use(
   cors({
     origin: function (origin, callback) {
       // Allow non-browser requests like curl/postman (no origin)
       if (!origin) return callback(null, true);
       if (allowedOrigins.indexOf(origin) !== -1) return callback(null, true);
-      // Deny by returning `false` (no CORS headers) rather than erroring.
       return callback(null, false);
     },
     credentials: true,
   })
 );
+
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: Number(process.env.RATE_LIMIT_MAX || 120),
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    error: 'Too many requests',
+    code: 'TOO_MANY_REQUESTS',
+  },
+});
+app.use(limiter);
 
 // Serve built frontend (Vite) when available.
 // Prefer backend/dist, then dist/ at repo root, then frontend/dist.

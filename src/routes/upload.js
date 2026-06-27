@@ -4,8 +4,9 @@ const slugify = require('slugify');
 const { Octokit } = require('@octokit/rest');
 const { supabaseDB, supabaseStorage, SUPABASE_STORAGE_BUCKET } = require('../supabaseClient');
 const { getSupabaseUserFromRequest, getUserRowByEmail } = require('../utils/supabaseAuth');
+const { sanitizeHtmlContent, sanitizeUrl } = require('../utils/security');
 
-const upload = multer({ storage: multer.memoryStorage() });
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024 } });
 const router = express.Router();
 
 const normalizeFileLanguage = (value) => {
@@ -64,7 +65,7 @@ router.post('/upload', upload.fields([
     const rol = String(dbUser?.rol || '').toLowerCase();
 
     const { name, description, type = 'free', price, category = 'otro', language } = req.body;
-    const previewUrlInput = String(req.body?.preview_url || '').trim();
+    const previewUrlInput = sanitizeUrl(String(req.body?.preview_url || '').trim());
     // accept epago either as `epago` or `price` form field
     const epagoInputRaw = (req.body && (typeof req.body.epago !== 'undefined')) ? req.body.epago : price;
     const previewFile = req.files && req.files.preview && req.files.preview[0];
@@ -147,28 +148,12 @@ router.post('/upload', upload.fields([
     const htmlSafeName = sanitizeStorageObjectName(htmlFile.originalname, 'file.html');
     const htmlPath = `html/${id}_${htmlSafeName}`;
     let htmlPublicUrl = null;
+    let sanitizedHtml = null;
     try {
-      htmlPublicUrl = await uploadToBucket(htmlPath, htmlFile.buffer, htmlFile.mimetype);
+      sanitizedHtml = sanitizeHtmlContent(htmlFile.buffer.toString('utf8'));
+      htmlPublicUrl = await uploadToBucket(htmlPath, Buffer.from(sanitizedHtml, 'utf8'), htmlFile.mimetype);
     } catch (e) {
       console.warn('Supabase html upload error:', e.message || e);
-    }
-
-    // Optionally publish on GH pages
-    let fileUrl = null;
-    if (octokit && GHP_OWNER && GHP_REPO) {
-      try {
-        const filePath = `files/${id}_${slug}.html`;
-        const contentBase64 = Buffer.from(htmlFile.buffer).toString('base64');
-        const params = { owner: GHP_OWNER, repo: GHP_REPO, path: filePath, message: `Add file ${filePath}`, content: contentBase64, branch: GHP_BRANCH };
-        try {
-          const existing = await octokit.repos.getContent({ owner: GHP_OWNER, repo: GHP_REPO, path: filePath, ref: GHP_BRANCH });
-          if (existing && existing.data && existing.data.sha) params.sha = existing.data.sha;
-        } catch (e) {}
-        await octokit.repos.createOrUpdateFileContents(params);
-        if (GHP_BASE_URL) fileUrl = `${GHP_BASE_URL}/${filePath}`;
-      } catch (e) {
-        console.warn('GitHub Pages publish error:', e.message || e);
-      }
     }
 
     // decide tipo and epago to store
@@ -199,6 +184,24 @@ router.post('/upload', upload.fields([
     // If VIP but no numeric price parsed, default to $2
     if (tipoFinal === 'vip' && (!Number.isFinite(Number(priceUsdToStore)) || Number(priceUsdToStore) <= 0)) {
       priceUsdToStore = 2;
+    }
+
+    const isVipFile = tipoFinal === 'vip';
+    let fileUrl = null;
+    if (!isVipFile && octokit && GHP_OWNER && GHP_REPO) {
+      try {
+        const filePath = `files/${id}_${slug}.html`;
+        const contentBase64 = Buffer.from(sanitizedHtml || htmlFile.buffer.toString('utf8'), 'utf8').toString('base64');
+        const params = { owner: GHP_OWNER, repo: GHP_REPO, path: filePath, message: `Add file ${filePath}`, content: contentBase64, branch: GHP_BRANCH };
+        try {
+          const existing = await octokit.repos.getContent({ owner: GHP_OWNER, repo: GHP_REPO, path: filePath, ref: GHP_BRANCH });
+          if (existing && existing.data && existing.data.sha) params.sha = existing.data.sha;
+        } catch (e) {}
+        await octokit.repos.createOrUpdateFileContents(params);
+        if (GHP_BASE_URL) fileUrl = `${GHP_BASE_URL.replace(/\/$/, '')}/${filePath}`;
+      } catch (e) {
+        console.warn('GitHub Pages publish error:', e.message || e);
+      }
     }
 
     // If user provided a preview URL, detect whether it is video-like.
@@ -235,8 +238,8 @@ router.post('/upload', upload.fields([
         preview_image_url: previewImagePublicUrl,
         preview_video_url: previewVideoPublicUrl,
         language: fileLanguage,
-        supabase_url: htmlPublicUrl,
-        file_url: fileUrl
+        supabase_url: isVipFile ? null : htmlPublicUrl,
+        file_url: isVipFile ? null : fileUrl,
       };
       let { data: insertData, error: insertError } = await supabaseDB.from('html_files').insert([insertPayload]).select();
       if (insertError) {

@@ -2,6 +2,7 @@ const express = require('express');
 const multer = require('multer');
 const { supabaseDB, supabaseStorage, SUPABASE_STORAGE_BUCKET } = require('../supabaseClient');
 const { getSupabaseUserFromRequest, getUserRowByEmail } = require('../utils/supabaseAuth');
+const { sanitizeHtmlContent, sanitizeUrl } = require('../utils/security');
 const cloudinary = require('cloudinary').v2;
 const { Octokit } = require('@octokit/rest');
 
@@ -13,7 +14,7 @@ cloudinary.config({
 
 const router = express.Router();
 
-const upload = multer({ storage: multer.memoryStorage() });
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024 } });
 
 const { Readable, pipeline } = require('stream');
 const { promisify } = require('util');
@@ -103,11 +104,12 @@ const collectAssetUrls = (contentStr, kind) => {
 };
 
 const fetchTextWithTimeout = async (url, timeoutMs = 2500) => {
-  if (!url || !/^https?:\/\//i.test(String(url))) return null;
+  const safeUrl = sanitizeUrl(String(url || ''));
+  if (!safeUrl) return null;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const resp = await fetch(url, { signal: controller.signal });
+    const resp = await fetch(safeUrl, { signal: controller.signal });
     if (!resp.ok) return null;
     return await resp.text();
   } catch {
@@ -521,14 +523,26 @@ router.get('/files', async (req, res) => {
       const filename = rec.name || rec.filename || rec.file_url || '';
       const rawName = rec.name || rec.filename || rec.file_data || '';
       const slug = (rawName && rawName.toString().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')) || `file-${rec.id}`;
-      const preview_url = rec.preview_image_url || rec.preview_url || rec.preview_video_url || rec.preview || rec.supabase_url || null;
-      const html_url = rec.file_url || rec.supabase_url || rec.html_url || null;
+      const preview_url = sanitizeUrl(rec.preview_image_url || rec.preview_url || rec.preview_video_url || rec.preview || rec.supabase_url || null);
+      const preview_image_url = sanitizeUrl(rec.preview_image_url || null);
+      const preview_video_url = sanitizeUrl(rec.preview_video_url || null);
+      const tutorial_url = sanitizeUrl(rec.tutorial_url || null);
+      const html_url = sanitizeUrl(rec.html_url || rec.file_url || rec.supabase_url || null);
       const rawEpago = (rec && typeof rec.epago !== 'undefined' && rec.epago !== null) ? String(rec.epago).trim().toLowerCase() : null;
       const explicitFree = rawEpago === 'gratuito' || rawEpago === 'gratis' || rawEpago === 'free';
       const priceUsd = getVipFilePriceUsd(rec);
       const isVip = !explicitFree && isVipFileRecord(rec);
       const price = Number.isFinite(priceUsd) ? priceUsd : null;
       const mappedLanguage = normalizeFileLanguage(rec.language || rec.idioma) || 'es';
+      const sanitizedRaw = {
+        ...rec,
+        file_url: sanitizeUrl(rec.file_url || null),
+        supabase_url: sanitizeUrl(rec.supabase_url || null),
+        html_url: sanitizeUrl(rec.html_url || null),
+        preview_image_url,
+        preview_video_url,
+        tutorial_url,
+      };
       return {
         id: rec.id,
         name: rawName || filename || `Archivo ${rec.id}`,
@@ -539,68 +553,25 @@ router.get('/files', async (req, res) => {
         price,
         description: rec.descripcion || rec.description || null,
         preview_url,
-        preview_image_url: rec.preview_image_url || null,
-        preview_video_url: rec.preview_video_url || null,
-        tutorial_url: rec.tutorial_url || null,
-        tutorial_title: rec.tutorial_title || null,
+        preview_image_url,
+        preview_video_url,
+        tutorial_url,
         html_url,
-        is_video: !!rec.preview_video_url,
+        is_video: !!preview_video_url,
         created_at: rec.created_at,
         downloads: rec.downloads || 0,
         likes: likesCountMap[rec.id] || 0,
-        raw: rec,
+        raw: sanitizedRaw,
         uploader: resolveUploader(rec),
       };
     });
 
     return res.json({ data: mapped });
   } catch (e) {
-    console.error('[PUT /api/file/:id] error:', e && (e.stack || e.message || e));
-    const isProd = (process.env.NODE_ENV || '').toLowerCase() === 'production';
-    const msg = (e && (e.message || String(e))) || 'Internal server error';
-    if (!isProd) {
-      return res.status(500).json({ error: msg, stack: e && e.stack ? e.stack.split('\n').slice(0,10).join('\n') : null });
-    }
+    console.error('[files] /files error:', e);
     return res.status(500).json({ error: 'Internal server error' });
   }
 });
-
-// GET /api/file/:id -> devuelve un solo archivo mapeado (usado por frontend para redirección)
-const tryFindFileByIdOrSlug = async (identifier) => {
-  // identifier may be numeric id (32-bit), slug, or other token. Try safe numeric lookup first.
-  try {
-    if (/^\d+$/.test(String(identifier))) {
-      const num = Number(identifier);
-      if (Number.isFinite(num) && num <= 2147483647) {
-        const { data, error } = await supabaseDB.from('html_files').select('*').eq('id', num).limit(1);
-        if (!error && data && data.length) return data[0];
-      }
-    }
-  } catch (e) {
-    console.warn('Numeric id lookup failed:', e && e.message ? e.message : e);
-  }
-
-  // try slug
-  // try filename fuzzy match (handle slugs like "my-file-name" by also checking with spaces)
-  try {
-    const candidates = [identifier, String(identifier).replace(/-/g, ' ')];
-    for (const c of candidates) {
-      if (!c) continue;
-      try {
-        const { data: fdata, error: fErr } = await supabaseDB.from('html_files').select('*').ilike('filename', `%${c}%`).limit(1);
-        if (!fErr && fdata && fdata.length) return fdata[0];
-      } catch (e) {}
-    }
-  } catch (e) {}
-
-  // try matching against common URL/path columns
-  try {
-    const { data: udata, error: uErr } = await supabaseDB.from('html_files').select('*').or(`file_url.eq.${identifier},supabase_url.eq.${identifier},file_data.eq.${identifier}`).limit(1);
-    if (!uErr && udata && udata.length) return udata[0];
-  } catch (e) {}
-
-  return null;
-};
 
 router.get('/file/:id', async (req, res) => {
   try {
@@ -610,8 +581,11 @@ router.get('/file/:id', async (req, res) => {
     const filename = rec.name || rec.filename || rec.file_url || '';
     const rawName = rec.name || rec.filename || rec.file_data || '';
     const slug = (rawName && rawName.toString().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')) || `file-${rec.id}`;
-    const preview_url = rec.preview_image_url || rec.preview_url || rec.preview_video_url || rec.preview || rec.supabase_url || null;
-    const html_url = rec.file_url || rec.supabase_url || rec.html_url || null;
+    const preview_url = sanitizeUrl(rec.preview_image_url || rec.preview_url || rec.preview_video_url || rec.preview || rec.supabase_url || null);
+    const preview_image_url = sanitizeUrl(rec.preview_image_url || null);
+    const preview_video_url = sanitizeUrl(rec.preview_video_url || null);
+    const tutorial_url = sanitizeUrl(rec.tutorial_url || null);
+    const html_url = sanitizeUrl(rec.html_url || rec.file_url || rec.supabase_url || null);
     const htmlSource = await fetchTextWithTimeout(html_url);
     const detectedImages = collectAssetUrls(htmlSource, 'image');
     const detectedAudio = collectAssetUrls(htmlSource, 'audio');
@@ -621,6 +595,15 @@ router.get('/file/:id', async (req, res) => {
     const isVip = !explicitFree2 && isVipFileRecord(rec);
     const price = Number.isFinite(priceUsd2) ? priceUsd2 : null;
     const mappedLanguage = normalizeFileLanguage(rec.language || rec.idioma) || 'es';
+    const sanitizedRaw = {
+      ...rec,
+      file_url: sanitizeUrl(rec.file_url || null),
+      supabase_url: sanitizeUrl(rec.supabase_url || null),
+      html_url: sanitizeUrl(rec.html_url || null),
+      preview_image_url,
+      preview_video_url,
+      tutorial_url,
+    };
     const mapped = {
       id: rec.id,
       name: rawName || filename || `Archivo ${rec.id}`,
@@ -631,20 +614,20 @@ router.get('/file/:id', async (req, res) => {
       price,
       description: rec.descripcion || rec.description || null,
       preview_url,
-      preview_image_url: rec.preview_image_url || null,
-      preview_video_url: rec.preview_video_url || null,
+      preview_image_url,
+      preview_video_url,
       detected_assets: {
         images: detectedImages,
         audio: detectedAudio,
       },
-      tutorial_url: rec.tutorial_url || null,
+      tutorial_url,
       tutorial_title: rec.tutorial_title || null,
       html_url,
-      is_video: !!rec.preview_video_url,
+      is_video: !!preview_video_url,
       created_at: rec.created_at,
       downloads: rec.downloads || 0,
       likes: 0,
-      raw: rec,
+      raw: sanitizedRaw,
       uploader: null,
     };
     // fallback single-file likes
@@ -709,30 +692,43 @@ router.put('/file/:id', async (req, res) => {
       if (normalizedLanguage) allowed.language = normalizedLanguage;
     }
 
-    // Allow setting preview URLs directly from the edit form
-    // Note: there is no `preview` DB column; map `preview_url` to image or video columns.
+    const normalizeSafeUrl = (rawValue) => {
+      if (typeof rawValue === 'undefined') return undefined;
+      if (!rawValue) return null;
+      return sanitizeUrl(String(rawValue).trim());
+    };
+
     if (typeof preview_image_url !== 'undefined') {
-      allowed.preview_image_url = preview_image_url || null;
+      const safeUrl = normalizeSafeUrl(preview_image_url);
+      if (preview_image_url && !safeUrl) return res.status(400).json({ error: 'Invalid preview_image_url' });
+      allowed.preview_image_url = safeUrl;
     }
     if (typeof preview_video_url !== 'undefined') {
-      allowed.preview_video_url = preview_video_url || null;
+      const safeUrl = normalizeSafeUrl(preview_video_url);
+      if (preview_video_url && !safeUrl) return res.status(400).json({ error: 'Invalid preview_video_url' });
+      allowed.preview_video_url = safeUrl;
     }
     if (typeof tutorial_url !== 'undefined') {
-      allowed.tutorial_url = tutorial_url || null;
+      const safeUrl = normalizeSafeUrl(tutorial_url);
+      if (tutorial_url && !safeUrl) return res.status(400).json({ error: 'Invalid tutorial_url' });
+      allowed.tutorial_url = safeUrl;
     }
     if (typeof tutorial_title !== 'undefined') {
       allowed.tutorial_title = tutorial_title || null;
     }
     if (typeof preview_url !== 'undefined' && (typeof preview_image_url === 'undefined' && typeof preview_video_url === 'undefined')) {
-      // Guess type by file extension in the URL (basic heuristic)
-      const urlLower = String(preview_url || '').toLowerCase();
-      const isLikelyVideo = urlLower.match(/\.(mp4|webm|mov|ogg|m4v|avi)(\?|$)/)
-        || /drive\.google\.com\//.test(urlLower)
-        || /(?:youtube\.com|youtu\.be)\//.test(urlLower);
-      if (isLikelyVideo) {
-        allowed.preview_video_url = preview_url || null;
-      } else {
-        allowed.preview_image_url = preview_url || null;
+      const safeUrl = normalizeSafeUrl(preview_url);
+      if (preview_url && !safeUrl) return res.status(400).json({ error: 'Invalid preview_url' });
+      if (safeUrl) {
+        const urlLower = String(safeUrl).toLowerCase();
+        const isLikelyVideo = urlLower.match(/\.(mp4|webm|mov|ogg|m4v|avi)(\?|$)/)
+          || /drive\.google\.com\//.test(urlLower)
+          || /(?:youtube\.com|youtu\.be)\//.test(urlLower);
+        if (isLikelyVideo) {
+          allowed.preview_video_url = safeUrl;
+        } else {
+          allowed.preview_image_url = safeUrl;
+        }
       }
     }
 
@@ -867,12 +863,13 @@ router.post(
       }
 
       if (htmlFile) {
+        const safeHtml = sanitizeHtmlContent(htmlFile.buffer.toString('utf8'));
         const safeName = sanitizeStorageObjectName(htmlFile.originalname, 'file');
         const path = `html/${rec.id}_${now}_${safeName}`;
-        const publicUrl = await uploadToBucket(path, htmlFile.buffer, htmlFile.mimetype);
+        const publicUrl = await uploadToBucket(path, Buffer.from(safeHtml, 'utf8'), htmlFile.mimetype);
         let githubPage = null;
         try {
-          githubPage = await publishHtmlToGithubPages(rec, htmlFile.buffer.toString('utf8'));
+          githubPage = await publishHtmlToGithubPages(rec, safeHtml);
         } catch (e) {
           console.warn('GitHub publish after edit failed:', e?.message || e);
           return res.status(500).json({ error: 'No se pudo publicar en GitHub Pages al editar el HTML' });
@@ -902,6 +899,7 @@ router.post('/file/:id/publish', async (req, res) => {
       console.warn('[publish] missing html in body id=', id);
       return res.status(400).json({ error: 'Missing html in body' });
     }
+    const sanitizedHtml = sanitizeHtmlContent(String(html));
 
     const { user } = await require('../utils/supabaseAuth').getSupabaseUserFromRequest(req);
     if (!user) {
@@ -913,6 +911,10 @@ router.post('/file/:id/publish', async (req, res) => {
     if (!rec) {
       console.warn('[publish] file not found id=', id, 'user=', user.id || user.email || '(unknown)');
       return res.status(404).json({ error: 'Not found' });
+    }
+
+    if (isVipFileRecord(rec)) {
+      return res.status(403).json({ error: 'Publicación no disponible para archivos VIP' });
     }
 
     const { row: dbUser } = await require('../utils/supabaseAuth').getUserRowByEmail(user.email);
@@ -933,7 +935,7 @@ router.post('/file/:id/publish', async (req, res) => {
       return res.status(500).json({ error: 'GitHub Pages not configured on server' });
     }
 
-    const published = await publishHtmlToGithubPages(rec, html, filename);
+    const published = await publishHtmlToGithubPages(rec, sanitizedHtml, filename);
 
     try {
       const customizationPayload = {
@@ -1167,16 +1169,43 @@ router.get('/file/:id/download', async (req, res) => {
       console.warn('Failed to update downloads count:', e && e.message ? e.message : e);
     }
 
-    // prefer explicit file_url first, then supabase_url
-    let url = rec.file_url || rec.supabase_url || rec.html_url || null;
+    const safeAbsoluteUrls = [rec.file_url, rec.supabase_url, rec.html_url]
+      .filter(Boolean)
+      .map((value) => sanitizeUrl(String(value)))
+      .filter(Boolean);
+    const fileDataPath = String(rec.file_data || '').trim();
+    const isVipItem = isVipFileRecord(rec);
+
+    let url = null;
+    if (isVipItem && fileDataPath) {
+      url = fileDataPath;
+    } else if (safeAbsoluteUrls.length > 0) {
+      url = safeAbsoluteUrls[0];
+    } else if (fileDataPath) {
+      url = fileDataPath;
+    }
+
     if (!url) return res.status(404).json({ error: 'File URL not found' });
 
-    // Decide whether to stream (force download) or redirect.
-    const looksLikeHtml = (u) => /\.html?(?:$|\?)/i.test(String(u || '')) || (rec.file_data && /\.html?$/i.test(rec.file_data));
+    const isAbsoluteUrl = (value) => /^https?:\/\//i.test(String(value || '').trim());
+    const looksLikeHtml = (u) => /\.html?(?:$|\?)/i.test(String(u || '')) || (rec.file_data && /\.html?$/i.test(String(rec.file_data || '')));
+
+    const getSignedUrlForPath = async (path) => {
+      if (!path) return null;
+      const { data: signed, error: signErr } = await supabaseStorage.storage.from(SUPABASE_STORAGE_BUCKET).createSignedUrl(path, 60);
+      if (signErr || !signed) {
+        console.error('Error creating signed URL for path:', path, signErr);
+        return null;
+      }
+      return signed.signedUrl || signed.signedURL;
+    };
 
     // Helper to stream a URL (fetch and pipe to response with Content-Disposition)
     const streamUrlAsAttachment = async (streamUrl, options = {}) => {
       const { suppressHttpErrors = false } = options;
+      if (isAbsoluteUrl(streamUrl) && !sanitizeUrl(streamUrl)) {
+        return res.status(400).json({ error: 'Invalid stream URL' });
+      }
       let fetchRes;
       try {
         fetchRes = await fetch(streamUrl);
@@ -1357,32 +1386,30 @@ router.get('/file/:id/download', async (req, res) => {
       }
     }
 
-    // Otherwise generate signed URL if needed
+    // Otherwise generate signed URL or redirect if needed
     try {
       let finalUrl = null;
-      const m = String(url).match(/storage\/v1\/object\/public\/([^\/]+)\/(.+)$/);
-      if (m) {
-        const bucket = m[1];
-        const objectPath = decodeURIComponent(m[2]);
-        const { data: signed, error: signErr } = await supabaseStorage.storage.from(bucket).createSignedUrl(objectPath, 60);
-        if (signErr || !signed) {
-          console.error('Error creating signed URL (public-path):', signErr);
-          return res.status(500).json({ error: 'Could not generate download URL' });
+      if (isAbsoluteUrl(url)) {
+        const m = String(url).match(/storage\/v1\/object\/public\/([^\/]+)\/(.+)$/);
+        if (m) {
+          const bucket = m[1];
+          const objectPath = decodeURIComponent(m[2]);
+          const { data: signed, error: signErr } = await supabaseStorage.storage.from(bucket).createSignedUrl(objectPath, 60);
+          if (signErr || !signed) {
+            console.error('Error creating signed URL (public-path):', signErr);
+            return res.status(500).json({ error: 'Could not generate download URL' });
+          }
+          finalUrl = signed.signedUrl || signed.signedURL;
+        } else {
+          finalUrl = url;
         }
-        finalUrl = signed.signedUrl || signed.signedURL;
       } else {
-        const objectPath = url;
-        const { data: signed2, error: signErr2 } = await supabaseStorage.storage.from('html-files').createSignedUrl(objectPath, 60);
-        if (signErr2 || !signed2) {
-          console.error('Error creating signed URL (default bucket):', signErr2);
+        finalUrl = await getSignedUrlForPath(url);
+        if (!finalUrl) {
           return res.status(500).json({ error: 'Could not generate download URL' });
         }
-        finalUrl = signed2.signedUrl || signed2.signedURL;
       }
 
-      if (!finalUrl) return res.status(500).json({ error: 'Could not determine download URL' });
-
-      // If we have a DB filename, stream the final URL and force Content-Disposition with that filename.
       if (rec && (rec.filename || rec.name)) {
         return await streamUrlAsAttachment(finalUrl);
       }
@@ -1391,7 +1418,6 @@ router.get('/file/:id/download', async (req, res) => {
         return await streamUrlAsAttachment(finalUrl);
       }
 
-      // Non-HTML and no DB filename: redirect to signed URL
       return res.redirect(302, finalUrl);
     } catch (e) {
       console.error('Error generating signed URL:', e);
