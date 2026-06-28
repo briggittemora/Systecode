@@ -4,7 +4,7 @@ const slugify = require('slugify');
 const { Octokit } = require('@octokit/rest');
 const { supabaseDB, supabaseStorage, SUPABASE_STORAGE_BUCKET } = require('../supabaseClient');
 const { getSupabaseUserFromRequest, getUserRowByEmail } = require('../utils/supabaseAuth');
-const { sanitizeHtmlContent, sanitizeUrl } = require('../utils/security');
+const { sanitizeUrl } = require('../utils/security');
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024 } });
 const router = express.Router();
@@ -148,10 +148,10 @@ router.post('/upload', upload.fields([
     const htmlSafeName = sanitizeStorageObjectName(htmlFile.originalname, 'file.html');
     const htmlPath = `html/${id}_${htmlSafeName}`;
     let htmlPublicUrl = null;
-    let sanitizedHtml = null;
+    let htmlContent = null;
     try {
-      sanitizedHtml = sanitizeHtmlContent(htmlFile.buffer.toString('utf8'));
-      htmlPublicUrl = await uploadToBucket(htmlPath, Buffer.from(sanitizedHtml, 'utf8'), htmlFile.mimetype);
+      htmlContent = htmlFile.buffer.toString('utf8');
+      htmlPublicUrl = await uploadToBucket(htmlPath, htmlFile.buffer, htmlFile.mimetype);
     } catch (e) {
       console.warn('Supabase html upload error:', e.message || e);
     }
@@ -191,7 +191,7 @@ router.post('/upload', upload.fields([
     if (!isVipFile && octokit && GHP_OWNER && GHP_REPO) {
       try {
         const filePath = `files/${id}_${slug}.html`;
-        const contentBase64 = Buffer.from(sanitizedHtml || htmlFile.buffer.toString('utf8'), 'utf8').toString('base64');
+        const contentBase64 = Buffer.from(htmlContent || htmlFile.buffer.toString('utf8'), 'utf8').toString('base64');
         const params = { owner: GHP_OWNER, repo: GHP_REPO, path: filePath, message: `Add file ${filePath}`, content: contentBase64, branch: GHP_BRANCH };
         try {
           const existing = await octokit.repos.getContent({ owner: GHP_OWNER, repo: GHP_REPO, path: filePath, ref: GHP_BRANCH });

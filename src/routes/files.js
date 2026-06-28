@@ -919,13 +919,13 @@ router.post(
       }
 
       if (htmlFile) {
-        const safeHtml = sanitizeHtmlContent(htmlFile.buffer.toString('utf8'));
+        const htmlContent = htmlFile.buffer.toString('utf8');
         const safeName = sanitizeStorageObjectName(htmlFile.originalname, 'file');
         const path = `html/${rec.id}_${now}_${safeName}`;
-        const publicUrl = await uploadToBucket(path, Buffer.from(safeHtml, 'utf8'), htmlFile.mimetype);
+        const publicUrl = await uploadToBucket(path, htmlFile.buffer, htmlFile.mimetype);
         let githubPage = null;
         try {
-          githubPage = await publishHtmlToGithubPages(rec, safeHtml);
+          githubPage = await publishHtmlToGithubPages(rec, htmlContent);
         } catch (e) {
           console.warn('GitHub publish after edit failed:', e?.message || e);
           return res.status(500).json({ error: 'No se pudo publicar en GitHub Pages al editar el HTML' });
