@@ -1,6 +1,7 @@
 const express = require('express');
 const { supabaseDB } = require('../supabaseClient');
 const { sanitizeUrl } = require('../utils/security');
+const { buildGitHubPagesFileUrl } = require('../utils/githubPages');
 const router = express.Router();
 
 router.get('/archivos/:slug/:id', async (req, res) => {
@@ -19,11 +20,16 @@ router.get('/archivos/:slug/:id', async (req, res) => {
   }
   // fallback to GH pages if configured
   const GHP_BASE_URL = process.env.GHPAGES_BASE_URL;
-  if (GHP_BASE_URL) {
-    const possible = `${GHP_BASE_URL.replace(/\/$/, '')}/files/${id}_${slug}.html`;
-    const safePossible = sanitizeUrl(possible);
-    if (safePossible) return res.redirect(safePossible);
-  }
+  const GHP_OWNER = process.env.GHPAGES_OWNER;
+  const GHP_REPO = process.env.GHPAGES_REPO;
+  const possible = buildGitHubPagesFileUrl({
+    owner: GHP_OWNER,
+    repo: GHP_REPO,
+    baseUrl: GHP_BASE_URL,
+    path: `files/${id}_${slug}.html`,
+  });
+  const safePossible = sanitizeUrl(possible);
+  if (safePossible) return res.redirect(safePossible);
   return res.status(404).send('<h1>Archivo no encontrado</h1>');
 });
 

@@ -5,6 +5,7 @@ const { Octokit } = require('@octokit/rest');
 const { supabaseDB, supabaseStorage, SUPABASE_STORAGE_BUCKET } = require('../supabaseClient');
 const { getSupabaseUserFromRequest, getUserRowByEmail } = require('../utils/supabaseAuth');
 const { sanitizeUrl } = require('../utils/security');
+const { buildGitHubPagesFileUrl } = require('../utils/githubPages');
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024 } });
 const router = express.Router();
@@ -198,7 +199,12 @@ router.post('/upload', upload.fields([
           if (existing && existing.data && existing.data.sha) params.sha = existing.data.sha;
         } catch (e) {}
         await octokit.repos.createOrUpdateFileContents(params);
-        if (GHP_BASE_URL) fileUrl = `${GHP_BASE_URL.replace(/\/$/, '')}/${filePath}`;
+        fileUrl = buildGitHubPagesFileUrl({
+          owner: GHP_OWNER,
+          repo: GHP_REPO,
+          baseUrl: GHP_BASE_URL,
+          path: filePath,
+        });
       } catch (e) {
         console.warn('GitHub Pages publish error:', e.message || e);
       }
