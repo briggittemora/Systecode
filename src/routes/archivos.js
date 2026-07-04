@@ -14,6 +14,23 @@ router.get('/archivos/:slug/:id', async (req, res) => {
       if (safeFileUrl) return res.redirect(safeFileUrl);
       const safeHtmlUrl = sanitizeUrl(record.html_url);
       if (safeHtmlUrl) return res.redirect(safeHtmlUrl);
+      const GHP_BASE_URL = process.env.GHPAGES_BASE_URL;
+      const GHP_OWNER = process.env.GHPAGES_OWNER;
+      const GHP_REPO = process.env.GHPAGES_REPO;
+      const recordPath = buildGitHubPagesFilePath({
+        id: record.id || id,
+        name: record.name || record.filename || slug,
+        preferredFilename: `${slug}.html`,
+      });
+      const possible = buildGitHubPagesFileUrl({
+        owner: GHP_OWNER,
+        repo: GHP_REPO,
+        baseUrl: GHP_BASE_URL,
+        path: recordPath,
+      });
+      const safePossible = sanitizeUrl(possible);
+      if (safePossible) return res.redirect(safePossible);
+      return res.status(404).send('<h1>Archivo no encontrado</h1>');
     }
   } catch (e) {
     console.warn('DB lookup error:', e.message || e);

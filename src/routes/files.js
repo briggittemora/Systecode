@@ -4,6 +4,7 @@ const { supabaseDB, supabaseStorage, SUPABASE_STORAGE_BUCKET } = require('../sup
 const { getSupabaseUserFromRequest, getUserRowByEmail } = require('../utils/supabaseAuth');
 const { sanitizeHtmlContent, sanitizeUrl } = require('../utils/security');
 const { withSupabaseRetry } = require('../utils/supabaseRetry');
+const { buildGitHubPagesFilePath, buildGitHubPagesFileUrl } = require('../utils/githubPages');
 const cloudinary = require('cloudinary').v2;
 const { Octokit } = require('@octokit/rest');
 
@@ -201,24 +202,12 @@ const publishHtmlToGithubPages = async (rec, html, preferredFilename = null) => 
   }
 
   const octokit = new Octokit({ auth: cfg.token });
-  const filenameSafe = String(rec.name || rec.filename || `file-${rec.id}`)
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/(^-|-$)/g, '');
-  const customNameRaw = String(preferredFilename || '').trim().toLowerCase();
-  let path;
-  if (customNameRaw) {
-    const customNameSafe = customNameRaw
-      .replace(/[^a-z0-9._-]+/g, '-')
-      .replace(/-+/g, '-')
-      .replace(/^[-_.]+|[-_.]+$/g, '');
-    const withExt = /\.html?$/i.test(customNameSafe)
-      ? customNameSafe
-      : `${customNameSafe || `file-${rec.id}-${Date.now()}`}.html`;
-    path = `${String(rec.id)}-${withExt}`;
-  } else {
-    path = `${String(rec.id)}-${filenameSafe}.html`;
-  }
+  const customNameRaw = String(preferredFilename || '').trim();
+  const path = buildGitHubPagesFilePath({
+    id: rec.id,
+    name: rec.name || rec.filename,
+    preferredFilename: customNameRaw || `${String(rec.name || rec.filename || `file-${rec.id}`).trim()}.html`,
+  });
 
   try {
     await octokit.rest.git.getRef({ owner: cfg.owner, repo: cfg.repo, ref: `heads/${cfg.branch}` });
@@ -261,14 +250,12 @@ const publishHtmlToGithubPages = async (rec, html, preferredFilename = null) => 
     });
   }
 
-  let url = null;
-  if (cfg.baseUrl) {
-    url = `${cfg.baseUrl.replace(/\/$/, '')}/${path}`;
-  } else if (`${cfg.repo}`.toLowerCase() === `${cfg.owner.toLowerCase()}.github.io`) {
-    url = `https://${cfg.owner}.github.io/${path}`;
-  } else {
-    url = `https://${cfg.owner}.github.io/${cfg.repo}/${path}`;
-  }
+  const url = buildGitHubPagesFileUrl({
+    owner: cfg.owner,
+    repo: cfg.repo,
+    baseUrl: cfg.baseUrl,
+    path,
+  });
 
   return { url, path, branch: cfg.branch };
 };
