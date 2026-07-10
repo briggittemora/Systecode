@@ -322,6 +322,26 @@ const resolveVipAccess = async (dbUser, email) => {
   return { isVipMember: false, source: 'none' };
 };
 
+// Validar si es UUID válido
+const isValidUUID = (str) => {
+  if (!str) return false;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(str));
+};
+
+// Separar IDs en UUID e INTEGER
+const separateIdTypes = (candidates) => {
+  const uuids = [];
+  const integers = [];
+  for (const c of candidates) {
+    if (isValidUUID(c)) {
+      uuids.push(c);
+    } else if (/^\d+$/.test(String(c))) {
+      integers.push(c);
+    }
+  }
+  return { uuids: Array.from(new Set(uuids)), integers: Array.from(new Set(integers)) };
+};
+
 const getLegacyUserIdCandidates = (rec) => {
   const keys = [
     'user_id',
@@ -393,10 +413,14 @@ async function buildUploaderResolver(records) {
   const byEmail = {};
   const authById = {};
 
-  const idCandidates = Array.from(new Set((records || []).flatMap(getLegacyUserIdCandidates).filter(Boolean)));
+  const allIdCandidates = Array.from(new Set((records || []).flatMap(getLegacyUserIdCandidates).filter(Boolean)));
   const emailCandidates = Array.from(new Set((records || []).flatMap(getLegacyEmailCandidates).filter(Boolean)));
+  
+  // CRÍTICO: Separar UUIDs de INTEGERs para evitar error PostgreSQL "invalid input syntax for type uuid"
+  const { uuids: uuidCandidates, integers: intCandidates } = separateIdTypes(allIdCandidates);
 
   const loadByIdChunk = async (chunk) => {
+    if (chunk.length === 0) return;
     const { data: urows, error: uerr } = await supabaseDB
       .from('users')
       .select('*')
@@ -414,6 +438,7 @@ async function buildUploaderResolver(records) {
   };
 
   const loadBySupabaseIdChunk = async (chunk) => {
+    if (chunk.length === 0) return;
     const { data: urows, error: uerr } = await supabaseDB
       .from('users')
       .select('*')
@@ -449,12 +474,13 @@ async function buildUploaderResolver(records) {
 
   // Supabase IN can fail with very large arrays, so chunk requests.
   const chunkSize = 100;
-  for (let i = 0; i < idCandidates.length; i += chunkSize) {
-    const chunk = idCandidates.slice(i, i + chunkSize);
+  // SOLO usar UUIDs válidos (no INTEGERs) para evitar error PostgreSQL 22P02
+  for (let i = 0; i < uuidCandidates.length; i += chunkSize) {
+    const chunk = uuidCandidates.slice(i, i + chunkSize);
     await loadByIdChunk(chunk);
   }
-  for (let i = 0; i < idCandidates.length; i += chunkSize) {
-    const chunk = idCandidates.slice(i, i + chunkSize);
+  for (let i = 0; i < uuidCandidates.length; i += chunkSize) {
+    const chunk = uuidCandidates.slice(i, i + chunkSize);
     await loadBySupabaseIdChunk(chunk);
   }
   for (let i = 0; i < emailCandidates.length; i += chunkSize) {
@@ -463,7 +489,7 @@ async function buildUploaderResolver(records) {
   }
 
   // Fallback for legacy rows: if uploader not in users table, try Supabase Auth by user id.
-  const unresolvedIds = idCandidates.filter((id) => !byId[id] && !bySupabaseId[id]);
+  const unresolvedIds = uuidCandidates.filter((id) => !byId[id] && !bySupabaseId[id]);
   for (const id of unresolvedIds) {
     const authUser = await getAuthUserById(id);
     if (!authUser) continue;
@@ -477,7 +503,9 @@ async function buildUploaderResolver(records) {
   }
 
   return (rec) => {
-    const ids = getLegacyUserIdCandidates(rec);
+    const allIds = getLegacyUserIdCandidates(rec);
+    // Filtrar solo UUIDs válidos
+    const ids = allIds.filter(isValidUUID);
     for (const id of ids) {
       if (byId[id]) return byId[id];
       if (bySupabaseId[id]) return bySupabaseId[id];

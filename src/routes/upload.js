@@ -238,7 +238,7 @@ router.post('/upload', upload.fields([
     try {
       const insertPayload = {
         filename: name,
-        user_id: dbUser?.id || user?.id || null,
+        supabase_user_id: user?.id || null,
         file_data: htmlPath,
         categoria: category,
         tipo: tipoFinal,

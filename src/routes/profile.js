@@ -97,10 +97,16 @@ router.post('/create', async (req, res) => {
       }
     }
 
+    const userId = supabase_user_id || (authUser?.id || null);
+    if (!userId) {
+      return res.status(400).json({ error: 'missing_user_id' });
+    }
+
     const row = {
+      id: userId,
       email,
       name: full_name || (authUser?.user_metadata?.full_name || authUser?.email || null),
-      supabase_user_id: supabase_user_id || (authUser?.id || null),
+      supabase_user_id: userId,
     };
 
     try {

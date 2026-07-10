@@ -7,6 +7,10 @@ const router = express.Router();
 router.get('/archivos/:slug/:id', async (req, res) => {
   const { slug, id } = req.params;
   try {
+    // Validar que id sea numérico para evitar error UUID
+    if (!id || !/^\d+$/.test(String(id))) {
+      return res.status(404).send('<h1>Archivo no encontrado</h1>');
+    }
     const { data, error } = await supabaseDB.from('html_files').select('*').eq('id', id).limit(1);
     if (!error && data && data.length > 0) {
       const record = data[0];
