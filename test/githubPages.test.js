@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { buildGitHubPagesFilePath, buildGitHubPagesFileUrl } = require('../src/utils/githubPages');
+const { buildGitHubPagesFilePath, buildGitHubPagesFileUrl, buildStorageHtmlPath } = require('../src/utils/githubPages');
 
 test('builds GitHub Pages URL from owner/repo when no base URL is provided', () => {
   const url = buildGitHubPagesFileUrl({
@@ -31,4 +31,25 @@ test('shortens very long file names for GitHub Pages paths', () => {
 
   assert.match(path, /^files\/1782813816460_[a-z0-9-]+\.html$/i);
   assert.ok(path.length < 180);
+});
+
+test('preserves the existing GitHub Pages path when re-publishing an uploaded file', () => {
+  const path = buildGitHubPagesFilePath({
+    id: '580',
+    name: 'te-amo-solo-a-ti',
+    preferredFilename: 'te-amo-solo-a-ti.html',
+    existingUrl: 'https://baque2005.github.io/public-files/files/1783655694758_te-amo-solo-a-ti.html',
+  });
+
+  assert.equal(path, 'files/1783655694758_te-amo-solo-a-ti.html');
+});
+
+test('preserves the existing storage path when updating an uploaded HTML file', () => {
+  const path = buildStorageHtmlPath({
+    id: '580',
+    originalName: 'te-amo-solo-a-ti.html',
+    existingPath: 'html/1783655694758_te-amo-solo-a-ti.html',
+  });
+
+  assert.equal(path, 'html/1783655694758_te-amo-solo-a-ti.html');
 });

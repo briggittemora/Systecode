@@ -5,7 +5,7 @@ const { Octokit } = require('@octokit/rest');
 const { supabaseDB, supabaseStorage, SUPABASE_STORAGE_BUCKET } = require('../supabaseClient');
 const { getSupabaseUserFromRequest, getUserRowByEmail } = require('../utils/supabaseAuth');
 const { sanitizeUrl } = require('../utils/security');
-const { buildGitHubPagesFilePath, buildGitHubPagesFileUrl } = require('../utils/githubPages');
+const { buildGitHubPagesFilePath, buildGitHubPagesFileUrl, buildStorageHtmlPath } = require('../utils/githubPages');
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024 } });
 const router = express.Router();
@@ -147,7 +147,7 @@ router.post('/upload', upload.fields([
 
     // HTML upload
     const htmlSafeName = sanitizeStorageObjectName(htmlFile.originalname, 'file.html');
-    const htmlPath = `html/${id}_${htmlSafeName}`;
+    const htmlPath = buildStorageHtmlPath({ id, originalName: htmlFile.originalname, existingPath: null });
     let htmlPublicUrl = null;
     let htmlContent = null;
     try {
@@ -195,6 +195,8 @@ router.post('/upload', upload.fields([
           id,
           name,
           preferredFilename: `${slug}.html`,
+          existingUrl: null,
+          existingPath: null,
         });
         const contentBase64 = Buffer.from(htmlContent || htmlFile.buffer.toString('utf8'), 'utf8').toString('base64');
         const params = { owner: GHP_OWNER, repo: GHP_REPO, path: filePath, message: `Add file ${filePath}`, content: contentBase64, branch: GHP_BRANCH };

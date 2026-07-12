@@ -22,20 +22,55 @@ function extractGitHubPagesRelativePath(url) {
   if (!url || typeof url !== 'string') return null;
   try {
     const parsed = new URL(url);
-    const pathname = parsed.pathname.replace(/^\/+/, '');
-    const index = pathname.toLowerCase().indexOf('files/');
-    if (index === -1) return null;
-    return pathname.slice(index);
+    const segments = parsed.pathname.split('/').filter(Boolean);
+    const filesIndex = segments.findIndex((segment) => segment.toLowerCase() === 'files');
+    if (filesIndex === -1) return null;
+    return segments.slice(filesIndex).join('/');
   } catch {
     return null;
   }
 }
 
-function buildGitHubPagesFilePath({ id, name, preferredFilename }) {
+function extractGitHubPagesPathId(path) {
+  if (!path || typeof path !== 'string') return null;
+  const normalized = String(path).trim().replace(/^\/+/, '');
+  const match = normalized.match(/(?:^|\/)files\/(\d+)_/i);
+  return match ? match[1] : null;
+}
+
+function buildStorageHtmlPath({ id, originalName, existingPath }) {
+  const baseId = String(id || '').trim();
+  const safeName = sanitizeStorageObjectName(originalName, 'file.html');
+  if (existingPath && typeof existingPath === 'string' && existingPath.trim()) {
+    const trimmed = existingPath.trim();
+    if (trimmed.startsWith('html/')) return trimmed;
+    if (trimmed.startsWith('/html/')) return trimmed.replace(/^\/+/, '');
+  }
+  if (baseId) return `html/${baseId}_${safeName}`;
+  return `html/${safeName}`;
+}
+
+function buildGitHubPagesFilePath({ id, name, preferredFilename, existingUrl, existingPath }) {
   const baseId = String(id || '').trim() || `${Date.now()}`;
   const rawName = String(preferredFilename || name || '').trim();
   const filename = normalizeGitHubPagesFilename(rawName, `${baseId}.html`);
   const basename = filename.replace(/\.html$/i, '');
+
+  if (existingUrl && typeof existingUrl === 'string' && existingUrl.trim()) {
+    const relativePath = extractGitHubPagesRelativePath(existingUrl);
+    if (relativePath) {
+      const normalized = String(relativePath).trim().replace(/^\/+/, '');
+      if (normalized.toLowerCase().startsWith('files/')) return normalized;
+      return `files/${normalized.replace(/^files\//i, '')}`;
+    }
+  }
+
+  if (existingPath && typeof existingPath === 'string' && existingPath.trim()) {
+    const normalized = String(existingPath).trim().replace(/^\/+/, '');
+    if (normalized.toLowerCase().startsWith('files/')) return normalized;
+    return `files/${normalized.replace(/^files\//i, '')}`;
+  }
+
   const maxSegmentLength = 40;
   if (basename.length <= maxSegmentLength) {
     return `files/${baseId}_${filename}`;
@@ -44,6 +79,22 @@ function buildGitHubPagesFilePath({ id, name, preferredFilename }) {
   const safeSegment = normalizeGitHubPagesPathSegment(rawName, 'file').slice(0, maxSegmentLength - 10);
   const timestamp = `${Date.now()}`.slice(-8);
   return `files/${baseId}_${safeSegment}-${timestamp}.html`;
+}
+
+function sanitizeStorageObjectName(value, fallback = 'file') {
+  const input = String(value || '').trim();
+  const extMatch = input.match(/\.[a-zA-Z0-9]{1,10}$/);
+  const ext = extMatch ? extMatch[0].toLowerCase() : '';
+  const base = input.replace(/\.[^.]+$/, '');
+  const normalized = base
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '');
+  const safeBase = normalized
+    .replace(/[^a-zA-Z0-9._-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^[-_.]+|[-_.]+$/g, '');
+  const finalBase = safeBase || fallback;
+  return `${finalBase}${ext}`;
 }
 
 function buildGitHubPagesFileUrl({ owner, repo, baseUrl, path, branch }) {
@@ -71,4 +122,5 @@ module.exports = {
   buildGitHubPagesFilePath,
   buildGitHubPagesFileUrl,
   extractGitHubPagesRelativePath,
+  buildStorageHtmlPath,
 };

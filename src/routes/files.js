@@ -4,7 +4,7 @@ const { supabaseDB, supabaseStorage, SUPABASE_STORAGE_BUCKET } = require('../sup
 const { getSupabaseUserFromRequest, getUserRowByEmail } = require('../utils/supabaseAuth');
 const { sanitizeHtmlContent, sanitizeUrl } = require('../utils/security');
 const { withSupabaseRetry } = require('../utils/supabaseRetry');
-const { buildGitHubPagesFilePath, buildGitHubPagesFileUrl } = require('../utils/githubPages');
+const { buildGitHubPagesFilePath, buildGitHubPagesFileUrl, buildStorageHtmlPath } = require('../utils/githubPages');
 const cloudinary = require('cloudinary').v2;
 const { Octokit } = require('@octokit/rest');
 
@@ -195,7 +195,7 @@ const getGithubPagesConfig = () => {
   return { owner, repo, token, branch, baseUrl };
 };
 
-const publishHtmlToGithubPages = async (rec, html, preferredFilename = null) => {
+const publishHtmlToGithubPages = async (rec, html, preferredFilename = null, options = {}) => {
   const cfg = getGithubPagesConfig();
   if (!cfg.owner || !cfg.repo || !cfg.token) {
     throw new Error('GitHub Pages not configured on server');
@@ -207,6 +207,8 @@ const publishHtmlToGithubPages = async (rec, html, preferredFilename = null) => 
     id: rec.id,
     name: rec.name || rec.filename,
     preferredFilename: customNameRaw || `${String(rec.name || rec.filename || `file-${rec.id}`).trim()}.html`,
+    existingUrl: options.existingUrl || rec.file_url || rec.html_url || rec.supabase_url || null,
+    existingPath: options.existingPath || rec.file_data || null,
   });
 
   try {
@@ -935,12 +937,12 @@ router.post(
 
       if (htmlFile) {
         const htmlContent = htmlFile.buffer.toString('utf8');
-        const safeName = sanitizeStorageObjectName(htmlFile.originalname, 'file');
-        const path = `html/${rec.id}_${now}_${safeName}`;
+        const existingPath = typeof rec.file_data === 'string' && rec.file_data.trim() ? rec.file_data.trim() : null;
+        const path = buildStorageHtmlPath({ id: rec.id, originalName: htmlFile.originalname, existingPath });
         const publicUrl = await uploadToBucket(path, htmlFile.buffer, htmlFile.mimetype);
         let githubPage = null;
         try {
-          githubPage = await publishHtmlToGithubPages(rec, htmlContent);
+          githubPage = await publishHtmlToGithubPages(rec, htmlContent, null, { existingUrl: rec.file_url || rec.html_url || rec.supabase_url || null, existingPath: rec.file_data || null });
         } catch (e) {
           console.warn('GitHub publish after edit failed:', e?.message || e);
           return res.status(500).json({ error: 'No se pudo publicar en GitHub Pages al editar el HTML' });
