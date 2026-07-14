@@ -14,14 +14,32 @@ const isPrivateOrLocalHostname = (hostname) => {
 };
 
 function sanitizeUrl(value) {
-  if (!value || typeof value !== 'string') return null;
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  if (DANGEROUS_URL_SCHEMES.some((scheme) => scheme.test(trimmed))) return null;
+  if (value === null || typeof value === 'undefined') return null;
+
+  let normalized = value;
+  if (typeof value === 'string') {
+    normalized = value;
+  } else if (typeof value === 'number' || typeof value === 'boolean') {
+    normalized = String(value);
+  } else if (typeof value === 'object') {
+    if (value instanceof URL) {
+      normalized = value.toString();
+    } else if (value && typeof value.toString === 'function') {
+      normalized = value.toString();
+    } else {
+      return null;
+    }
+  } else {
+    return null;
+  }
+
+  const stringValue = String(normalized || '').trim();
+  if (!stringValue) return null;
+  if (DANGEROUS_URL_SCHEMES.some((scheme) => scheme.test(stringValue))) return null;
 
   let url;
   try {
-    url = new URL(trimmed);
+    url = new URL(stringValue);
   } catch {
     return null;
   }
