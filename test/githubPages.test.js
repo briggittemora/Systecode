@@ -53,3 +53,27 @@ test('preserves the existing storage path when updating an uploaded HTML file', 
 
   assert.equal(path, 'html/1783655694758_te-amo-solo-a-ti.html');
 });
+
+test('builds a user-specific GitHub Pages path for personalizations', () => {
+  const path = buildGitHubPagesFilePath({
+    id: '580',
+    name: 'usuario galaxia para ti',
+    preferredFilename: 'usuario-galaxia-para-ti.html',
+    userId: '524',
+    personalization: true,
+    timestamp: '1782973615598',
+  });
+
+  assert.equal(path, 'files/524-usuario-galaxia-para-ti-1782973615598.html');
+});
+
+test('builds a user-specific storage path for personalized HTML files', () => {
+  const path = buildStorageHtmlPath({
+    id: '580',
+    originalName: 'usuario-galaxia-para-ti.html',
+    userId: '524',
+    personalization: true,
+  });
+
+  assert.equal(path, 'html/524_580_usuario-galaxia-para-ti.html');
+});

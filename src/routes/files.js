@@ -209,6 +209,9 @@ const publishHtmlToGithubPages = async (rec, html, preferredFilename = null, opt
     preferredFilename: customNameRaw || `${String(rec.name || rec.filename || `file-${rec.id}`).trim()}.html`,
     existingUrl: options.existingUrl || rec.file_url || rec.html_url || rec.supabase_url || null,
     existingPath: options.existingPath || rec.file_data || null,
+    userId: options.userId || rec.supabase_user_id || rec.user_id || null,
+    personalization: Boolean(options.personalization),
+    timestamp: options.timestamp || null,
   });
 
   try {
@@ -938,11 +941,23 @@ router.post(
       if (htmlFile) {
         const htmlContent = htmlFile.buffer.toString('utf8');
         const existingPath = typeof rec.file_data === 'string' && rec.file_data.trim() ? rec.file_data.trim() : null;
-        const path = buildStorageHtmlPath({ id: rec.id, originalName: htmlFile.originalname, existingPath });
+        const path = buildStorageHtmlPath({
+          id: rec.id,
+          originalName: htmlFile.originalname,
+          existingPath,
+          userId: user?.id || rec.supabase_user_id || null,
+          personalization: true,
+        });
         const publicUrl = await uploadToBucket(path, htmlFile.buffer, htmlFile.mimetype);
         let githubPage = null;
         try {
-          githubPage = await publishHtmlToGithubPages(rec, htmlContent, null, { existingUrl: rec.file_url || rec.html_url || rec.supabase_url || null, existingPath: rec.file_data || null });
+          githubPage = await publishHtmlToGithubPages(rec, htmlContent, null, {
+            existingUrl: rec.file_url || rec.html_url || rec.supabase_url || null,
+            existingPath: rec.file_data || null,
+            userId: user?.id || rec.supabase_user_id || null,
+            personalization: true,
+            timestamp: String(Date.now()),
+          });
         } catch (e) {
           console.warn('GitHub publish after edit failed:', e?.message || e);
           return res.status(500).json({ error: 'No se pudo publicar en GitHub Pages al editar el HTML' });

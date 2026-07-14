@@ -197,6 +197,8 @@ router.post('/upload', upload.fields([
           preferredFilename: `${slug}.html`,
           existingUrl: null,
           existingPath: null,
+          userId: user?.id || dbUser?.id || null,
+          personalization: false,
         });
         const contentBase64 = Buffer.from(htmlContent || htmlFile.buffer.toString('utf8'), 'utf8').toString('base64');
         const params = { owner: GHP_OWNER, repo: GHP_REPO, path: filePath, message: `Add file ${filePath}`, content: contentBase64, branch: GHP_BRANCH };
