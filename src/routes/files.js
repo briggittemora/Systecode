@@ -962,9 +962,29 @@ router.post(
           console.warn('GitHub publish after edit failed:', e?.message || e);
           return res.status(500).json({ error: 'No se pudo publicar en GitHub Pages al editar el HTML' });
         }
-        updates.file_data = path;
-        updates.supabase_url = publicUrl;
-        updates.file_url = githubPage?.url || null;
+
+        try {
+          const customizationPayload = {
+            user_id: dbUser?.id || null,
+            supabase_user_id: user?.id || null,
+            user_email: user?.email || null,
+            original_file_id: rec.id,
+            original_file_name: rec.name || rec.filename || null,
+            published_url: githubPage?.url || null,
+            published_path: githubPage?.path || null,
+            source_filename: htmlFile.originalname || null,
+          };
+          const { error: customErr } = await supabaseDB
+            .from('user_file_customizations')
+            .insert([customizationPayload]);
+          if (customErr) {
+            console.warn('[assets] personalization history insert failed:', customErr?.message || customErr);
+          }
+        } catch (historyErr) {
+          console.warn('[assets] personalization history exception:', historyErr?.message || historyErr);
+        }
+
+        return res.json({ success: true, data: { id: rec.id, file_url: githubPage?.url || null, supabase_url: publicUrl, file_data: path } });
       }
 
       const { data: up, error: upErr } = await supabaseDB.from('html_files').update(updates).eq('id', rec.id).select();
