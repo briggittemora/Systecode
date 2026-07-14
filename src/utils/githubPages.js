@@ -63,6 +63,13 @@ function buildGitHubPagesFilePath({ id, name, preferredFilename, existingUrl, ex
   const basename = filename.replace(/\.html$/i, '');
   const safeTimestamp = String(timestamp || Date.now()).trim();
 
+  // When personalizing, always generate a new path specific to this user/timestamp
+  if (personalization && userId) {
+    const safeUserId = String(userId).trim().replace(/[^a-zA-Z0-9._-]+/g, '-');
+    const safeBaseName = normalizeGitHubPagesPathSegment(basename.replace(/^\d+_?/, ''), 'file');
+    return `files/${safeUserId}-${safeBaseName}-${safeTimestamp}.html`;
+  }
+
   if (String(id).trim() === '580') {
     const fallbackPath = existingUrl || existingPath ? (extractGitHubPagesRelativePath(existingUrl || existingPath) || null) : null;
     if (fallbackPath) return fallbackPath.replace(/^\/+/, '').replace(/^files\//i, 'files/');
@@ -81,12 +88,6 @@ function buildGitHubPagesFilePath({ id, name, preferredFilename, existingUrl, ex
     const normalized = String(existingPath).trim().replace(/^\/+/, '');
     if (normalized.toLowerCase().startsWith('files/')) return normalized;
     return `files/${normalized.replace(/^files\//i, '')}`;
-  }
-
-  if (personalization && userId) {
-    const safeUserId = String(userId).trim().replace(/[^a-zA-Z0-9._-]+/g, '-');
-    const safeBaseName = normalizeGitHubPagesPathSegment(basename.replace(/^\d+_?/, ''), 'file');
-    return `files/${safeUserId}-${safeBaseName}-${safeTimestamp}.html`;
   }
 
   const maxSegmentLength = 40;
