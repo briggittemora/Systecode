@@ -23,9 +23,12 @@ function extractGitHubPagesRelativePath(url) {
   try {
     const parsed = new URL(url);
     const segments = parsed.pathname.split('/').filter(Boolean);
+    // Para mantener compatibilidad si hay archivos viejos en 'files/'
     const filesIndex = segments.findIndex((segment) => segment.toLowerCase() === 'files');
-    if (filesIndex === -1) return null;
-    return segments.slice(filesIndex).join('/');
+    if (filesIndex !== -1) return segments.slice(filesIndex).join('/');
+    
+    // Si no está en 'files/', simplemente devuelve el nombre del archivo al final de la URL
+    return segments.length > 0 ? segments[segments.length - 1] : null;
   } catch {
     return null;
   }
@@ -34,7 +37,8 @@ function extractGitHubPagesRelativePath(url) {
 function extractGitHubPagesPathId(path) {
   if (!path || typeof path !== 'string') return null;
   const normalized = String(path).trim().replace(/^\/+/, '');
-  const match = normalized.match(/(?:^|\/)files\/(\d+)_/i);
+  // Modificado para capturar el ID ya sea "files/524_" o directamente "524-" en la raíz
+  const match = normalized.match(/(?:^|\/)(?:files\/)?(\w+)[_-]/i);
   return match ? match[1] : null;
 }
 
@@ -58,46 +62,50 @@ function buildStorageHtmlPath({ id, originalName, existingPath, userId, personal
 
 function buildGitHubPagesFilePath({ id, name, preferredFilename, existingUrl, existingPath, userId, personalization, timestamp }) {
   const baseId = String(id || '').trim() || `${Date.now()}`;
-  const rawName = String(preferredFilename || name || '').trim();
+  
+  // 1. SOLUCIÓN AL [object Object]: Si envían un objeto por error, extraemos el nombre real
+  let rawNameObj = preferredFilename || name || '';
+  if (typeof rawNameObj === 'object' && rawNameObj !== null) {
+    rawNameObj = rawNameObj.name || rawNameObj.title || rawNameObj.originalName || 'archivo';
+  }
+  const rawName = String(rawNameObj).trim();
+
   const filename = normalizeGitHubPagesFilename(rawName, `${baseId}.html`);
   const basename = filename.replace(/\.html$/i, '');
   const safeTimestamp = String(timestamp || Date.now()).trim();
 
-  // When personalizing, always generate a new path specific to this user/timestamp
+  // 2. SOLUCIÓN A LA ESTRUCTURA DE LA URL: Generar formato limpio sin la carpeta "files/"
   if (personalization && userId) {
     const safeUserId = String(userId).trim().replace(/[^a-zA-Z0-9._-]+/g, '-');
-    const safeBaseName = normalizeGitHubPagesPathSegment(basename.replace(/^\d+_?/, ''), 'file');
-    return `files/${safeUserId}-${safeBaseName}-${safeTimestamp}.html`;
+    const safeBaseName = normalizeGitHubPagesPathSegment(basename.replace(/^\d+_?/, ''), 'archivo');
+    
+    // Retorna: 524-usuario-galaxia-para-ti-1782973615598.html
+    return `${safeUserId}-${safeBaseName}-${safeTimestamp}.html`;
   }
 
+  // --- Lógicas alternativas adaptadas para no forzar 'files/' ---
   if (String(id).trim() === '580') {
     const fallbackPath = existingUrl || existingPath ? (extractGitHubPagesRelativePath(existingUrl || existingPath) || null) : null;
-    if (fallbackPath) return fallbackPath.replace(/^\/+/, '').replace(/^files\//i, 'files/');
+    if (fallbackPath) return fallbackPath.replace(/^\/+/, '');
   }
 
   if (existingUrl && typeof existingUrl === 'string' && existingUrl.trim()) {
     const relativePath = extractGitHubPagesRelativePath(existingUrl);
-    if (relativePath) {
-      const normalized = String(relativePath).trim().replace(/^\/+/, '');
-      if (normalized.toLowerCase().startsWith('files/')) return normalized;
-      return `files/${normalized.replace(/^files\//i, '')}`;
-    }
+    if (relativePath) return relativePath.replace(/^\/+/, '');
   }
 
   if (existingPath && typeof existingPath === 'string' && existingPath.trim()) {
-    const normalized = String(existingPath).trim().replace(/^\/+/, '');
-    if (normalized.toLowerCase().startsWith('files/')) return normalized;
-    return `files/${normalized.replace(/^files\//i, '')}`;
+    return String(existingPath).trim().replace(/^\/+/, '');
   }
 
   const maxSegmentLength = 40;
   if (basename.length <= maxSegmentLength) {
-    return `files/${baseId}_${filename}`;
+    return `${baseId}-${filename}`;
   }
 
-  const safeSegment = normalizeGitHubPagesPathSegment(rawName, 'file').slice(0, maxSegmentLength - 10);
+  const safeSegment = normalizeGitHubPagesPathSegment(rawName, 'archivo').slice(0, maxSegmentLength - 10);
   const timestampSuffix = `${Date.now()}`.slice(-8);
-  return `files/${baseId}_${safeSegment}-${timestampSuffix}.html`;
+  return `${baseId}-${safeSegment}-${timestampSuffix}.html`;
 }
 
 function sanitizeStorageObjectName(value, fallback = 'file') {
