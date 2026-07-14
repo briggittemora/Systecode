@@ -237,35 +237,44 @@ router.post('/upload', upload.fields([
 
     const fileLanguage = normalizeFileLanguage(language);
 
-    // insert metadata - use DB column names (spanish) and fail if insert fails
+    // insert metadata - use DB column names (spanish) and fall back gracefully when the table is missing newer columns
     let dbRecord = null;
     try {
-      const insertPayload = {
+      const basePayload = {
         filename: name,
-        supabase_user_id: user?.id || null,
         file_data: htmlPath,
         categoria: category,
         tipo: tipoFinal,
         epago: epagoToStore,
-        price_usd: (tipoFinal === 'vip') ? Number(priceUsdToStore) : null,
         descripcion: description || null,
         preview_image_url: previewImagePublicUrl,
         preview_video_url: previewVideoPublicUrl,
-        language: fileLanguage,
         supabase_url: isVipFile ? null : htmlPublicUrl,
         file_url: isVipFile ? null : fileUrl,
       };
+
+      const insertPayload = { ...basePayload };
+      if (dbUser?.id) {
+        insertPayload.user_id = dbUser.id;
+      } else if (user?.id) {
+        insertPayload.user_id = user.id;
+      }
+
+      if (tipoFinal === 'vip') {
+        insertPayload.price_usd = Number(priceUsdToStore);
+      }
+      insertPayload.language = fileLanguage;
+
       let { data: insertData, error: insertError } = await supabaseDB.from('html_files').insert([insertPayload]).select();
       if (insertError) {
         const msg = String(insertError.message || insertError || '');
-        // If DB hasn't been migrated yet, retry without optional columns.
-        if (
-          (msg.toLowerCase().includes('price_usd') && msg.toLowerCase().includes('does not exist')) ||
-          (msg.toLowerCase().includes('language') && msg.toLowerCase().includes('does not exist'))
-        ) {
-          const retryPayload = { ...insertPayload };
-          if (msg.toLowerCase().includes('price_usd') && msg.toLowerCase().includes('does not exist')) delete retryPayload.price_usd;
-          if (msg.toLowerCase().includes('language') && msg.toLowerCase().includes('does not exist')) delete retryPayload.language;
+        const retryPayload = { ...insertPayload };
+
+        if (msg.toLowerCase().includes('price_usd') && msg.toLowerCase().includes('does not exist')) delete retryPayload.price_usd;
+        if (msg.toLowerCase().includes('language') && msg.toLowerCase().includes('does not exist')) delete retryPayload.language;
+        if (msg.toLowerCase().includes('supabase_user_id') && msg.toLowerCase().includes('does not exist')) delete retryPayload.supabase_user_id;
+
+        if (Object.keys(retryPayload).length !== Object.keys(insertPayload).length) {
           const retry = await supabaseDB.from('html_files').insert([retryPayload]).select();
           insertData = retry.data;
           insertError = retry.error;
