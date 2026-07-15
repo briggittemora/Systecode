@@ -64,7 +64,20 @@ test('builds a user-specific GitHub Pages path for personalizations', () => {
     timestamp: '1782973615598',
   });
 
-  assert.equal(path, 'files/524-usuario-galaxia-para-ti-1782973615598.html');
+  assert.equal(path, '524-usuario-galaxia-para-ti-1782973615598.html');
+});
+
+test('builds a user-specific GitHub Pages path when userId is an object', () => {
+  const path = buildGitHubPagesFilePath({
+    id: '580',
+    name: 'usuario galaxia para ti',
+    preferredFilename: 'usuario-galaxia-para-ti.html',
+    userId: { id: '524' },
+    personalization: true,
+    timestamp: '1782973615598',
+  });
+
+  assert.equal(path, '524-usuario-galaxia-para-ti-1782973615598.html');
 });
 
 test('builds a user-specific storage path for personalized HTML files', () => {

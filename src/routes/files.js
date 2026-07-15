@@ -224,7 +224,13 @@ const publishHtmlToGithubPages = async (rec, html, preferredFilename = null, opt
     await octokit.rest.git.createRef({ owner: cfg.owner, repo: cfg.repo, ref: `refs/heads/${cfg.branch}`, sha: baseSha });
   }
 
-  const contentB64 = Buffer.from(String(html || ''), 'utf8').toString('base64');
+  // SOLUCIÓN 1: Extraer el HTML real si envían un objeto por error
+  let safeHtml = html;
+  if (typeof safeHtml === 'object' && safeHtml !== null) {
+    safeHtml = safeHtml.html || safeHtml.content || safeHtml.data || JSON.stringify(safeHtml);
+  }
+  const contentB64 = Buffer.from(String(safeHtml || ''), 'utf8').toString('base64');
+
   let existingSha = null;
   try {
     const getRes = await octokit.rest.repos.getContent({ owner: cfg.owner, repo: cfg.repo, path, ref: cfg.branch });
@@ -941,11 +947,12 @@ router.post(
       if (htmlFile) {
         const htmlContent = htmlFile.buffer.toString('utf8');
         const existingPath = typeof rec.file_data === 'string' && rec.file_data.trim() ? rec.file_data.trim() : null;
+        const personalizationUserId = dbUser?.id || user?.id || rec.supabase_user_id || null;
         const path = buildStorageHtmlPath({
           id: rec.id,
           originalName: htmlFile.originalname,
           existingPath,
-          userId: user?.id || rec.supabase_user_id || null,
+          userId: personalizationUserId,
           personalization: true,
         });
         const publicUrl = await uploadToBucket(path, htmlFile.buffer, htmlFile.mimetype);
@@ -954,7 +961,7 @@ router.post(
           githubPage = await publishHtmlToGithubPages(rec, htmlContent, null, {
             existingUrl: rec.file_url || rec.html_url || rec.supabase_url || null,
             existingPath: rec.file_data || null,
-            userId: user?.id || rec.supabase_user_id || null,
+            userId: personalizationUserId,
             personalization: true,
             timestamp: String(Date.now()),
           });
@@ -1007,7 +1014,13 @@ router.post('/file/:id/publish', async (req, res) => {
       console.warn('[publish] missing html in body id=', id);
       return res.status(400).json({ error: 'Missing html in body' });
     }
-    const sanitizedHtml = sanitizeHtmlContent(String(html));
+
+    // SOLUCIÓN 2: Evitar que el sanitizador procese [object Object]
+    let rawHtml = html;
+    if (typeof rawHtml === 'object' && rawHtml !== null) {
+      rawHtml = rawHtml.html || rawHtml.content || rawHtml.data || JSON.stringify(rawHtml);
+    }
+    const sanitizedHtml = sanitizeHtmlContent(String(rawHtml));
 
     const { user } = await require('../utils/supabaseAuth').getSupabaseUserFromRequest(req);
     if (!user) {
@@ -1043,7 +1056,13 @@ router.post('/file/:id/publish', async (req, res) => {
       return res.status(500).json({ error: 'GitHub Pages not configured on server' });
     }
 
-    const published = await publishHtmlToGithubPages(rec, sanitizedHtml, filename);
+    // SOLUCIÓN 3: Pasar personalización como TRUE para NO sobrescribir la plantilla original
+    const published = await publishHtmlToGithubPages(rec, sanitizedHtml, filename, {
+      existingUrl: rec.file_url || rec.html_url || rec.supabase_url || null,
+      userId: user?.id || dbUser?.id || null,
+      personalization: true,
+      timestamp: String(Date.now()),
+    });
 
     try {
       const customizationPayload = {

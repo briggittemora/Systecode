@@ -42,6 +42,17 @@ function extractGitHubPagesPathId(path) {
   return match ? match[1] : null;
 }
 
+function normalizeGitHubPagesUserId(value) {
+  if (value === null || typeof value === 'undefined') return null;
+  let candidate = value;
+  if (typeof candidate === 'object' && candidate !== null) {
+    candidate = candidate.id || candidate.user_id || candidate.uid || candidate.uuid || candidate.name || candidate.email || null;
+  }
+  const stringValue = String(candidate || '').trim();
+  if (!stringValue) return null;
+  return stringValue.replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
+}
+
 function buildStorageHtmlPath({ id, originalName, existingPath, userId, personalization }) {
   const baseId = String(id || '').trim();
   const safeName = sanitizeStorageObjectName(originalName, 'file.html');
@@ -51,9 +62,11 @@ function buildStorageHtmlPath({ id, originalName, existingPath, userId, personal
     if (trimmed.startsWith('/html/')) return trimmed.replace(/^\/+/, '');
   }
 
-  if (personalization && userId) {
-    const safeUserId = String(userId).trim().replace(/[^a-zA-Z0-9._-]+/g, '-');
-    return `html/${safeUserId}_${baseId}_${safeName}`;
+  if (personalization) {
+    const safeUserId = normalizeGitHubPagesUserId(userId);
+    if (safeUserId) {
+      return `html/${safeUserId}_${baseId}_${safeName}`;
+    }
   }
 
   if (baseId) return `html/${baseId}_${safeName}`;
@@ -75,12 +88,12 @@ function buildGitHubPagesFilePath({ id, name, preferredFilename, existingUrl, ex
   const safeTimestamp = String(timestamp || Date.now()).trim();
 
   // 2. SOLUCIÓN A LA ESTRUCTURA DE LA URL: Generar formato limpio sin la carpeta "files/"
-  if (personalization && userId) {
-    const safeUserId = String(userId).trim().replace(/[^a-zA-Z0-9._-]+/g, '-');
-    const safeBaseName = normalizeGitHubPagesPathSegment(basename.replace(/^\d+_?/, ''), 'archivo');
-    
-    // Retorna: 524-usuario-galaxia-para-ti-1782973615598.html
-    return `${safeUserId}-${safeBaseName}-${safeTimestamp}.html`;
+  if (personalization) {
+    const safeUserId = normalizeGitHubPagesUserId(userId);
+    if (safeUserId) {
+      const safeBaseName = normalizeGitHubPagesPathSegment(basename.replace(/^\d+_?/, ''), 'archivo');
+      return `${safeUserId}-${safeBaseName}-${safeTimestamp}.html`;
+    }
   }
 
   // --- Lógicas alternativas adaptadas para no forzar 'files/' ---
@@ -100,12 +113,12 @@ function buildGitHubPagesFilePath({ id, name, preferredFilename, existingUrl, ex
 
   const maxSegmentLength = 40;
   if (basename.length <= maxSegmentLength) {
-    return `${baseId}-${filename}`;
+    return `files/${baseId}_${filename}`;
   }
 
   const safeSegment = normalizeGitHubPagesPathSegment(rawName, 'archivo').slice(0, maxSegmentLength - 10);
   const timestampSuffix = `${Date.now()}`.slice(-8);
-  return `${baseId}-${safeSegment}-${timestampSuffix}.html`;
+  return `files/${baseId}_${safeSegment}-${timestampSuffix}.html`;
 }
 
 function sanitizeStorageObjectName(value, fallback = 'file') {
