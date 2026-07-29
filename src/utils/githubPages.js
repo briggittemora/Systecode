@@ -11,6 +11,15 @@ function normalizeGitHubPagesPathSegment(value, fallback = 'file') {
   return normalized || fallback;
 }
 
+function getGitHubPagesConfig() {
+  const owner = process.env.GHPAGES_OWNER || process.env.GITHUB_PAGES_REPO_OWNER || process.env.GH_PAGES_OWNER || '';
+  const repo = process.env.GHPAGES_REPO || process.env.GITHUB_PAGES_REPO_NAME || process.env.GH_PAGES_REPO || '';
+  const token = process.env.GHPAGES_TOKEN || process.env.GITHUB_TOKEN || process.env.GITHUB_PAGES_TOKEN || process.env.GH_PAGES_TOKEN || '';
+  const branch = process.env.GHPAGES_BRANCH || process.env.GITHUB_PAGES_BRANCH || process.env.GH_PAGES_BRANCH || 'gh-pages';
+  const baseUrl = (process.env.GHPAGES_BASE_URL || process.env.GITHUB_PAGES_BASE_URL || process.env.GH_PAGES_BASE_URL || '').toString().trim();
+  return { owner, repo, token, branch, baseUrl };
+}
+
 function normalizeGitHubPagesFilename(value, fallback = 'file.html') {
   const input = String(value || '').trim();
   const withoutExt = input.replace(/\.html?$/i, '').trim();
@@ -163,4 +172,5 @@ module.exports = {
   buildGitHubPagesFileUrl,
   extractGitHubPagesRelativePath,
   buildStorageHtmlPath,
+  getGitHubPagesConfig,
 };

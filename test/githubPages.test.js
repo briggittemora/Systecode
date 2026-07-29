@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { buildGitHubPagesFilePath, buildGitHubPagesFileUrl, buildStorageHtmlPath } = require('../src/utils/githubPages');
+const { buildGitHubPagesFilePath, buildGitHubPagesFileUrl, buildStorageHtmlPath, getGitHubPagesConfig } = require('../src/utils/githubPages');
 
 test('builds GitHub Pages URL from owner/repo when no base URL is provided', () => {
   const url = buildGitHubPagesFileUrl({
@@ -89,4 +89,20 @@ test('builds a user-specific storage path for personalized HTML files', () => {
   });
 
   assert.equal(path, 'html/524_580_usuario-galaxia-para-ti.html');
+});
+
+test('reads GitHub Pages config from the fallback environment variables', () => {
+  process.env.GITHUB_PAGES_REPO_OWNER = 'mi-owner';
+  process.env.GITHUB_PAGES_REPO_NAME = 'mi-repo';
+  process.env.GITHUB_PAGES_TOKEN = 'abc123';
+  delete process.env.GHPAGES_OWNER;
+  delete process.env.GHPAGES_REPO;
+  delete process.env.GHPAGES_TOKEN;
+
+  const config = getGitHubPagesConfig();
+
+  assert.equal(config.owner, 'mi-owner');
+  assert.equal(config.repo, 'mi-repo');
+  assert.equal(config.token, 'abc123');
+  assert.equal(config.branch, 'gh-pages');
 });

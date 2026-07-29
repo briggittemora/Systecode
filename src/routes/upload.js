@@ -5,7 +5,7 @@ const { Octokit } = require('@octokit/rest');
 const { supabaseDB, supabaseStorage, SUPABASE_STORAGE_BUCKET } = require('../supabaseClient');
 const { getSupabaseUserFromRequest, getUserRowByEmail } = require('../utils/supabaseAuth');
 const { sanitizeUrl } = require('../utils/security');
-const { buildGitHubPagesFilePath, buildGitHubPagesFileUrl, buildStorageHtmlPath } = require('../utils/githubPages');
+const { buildGitHubPagesFilePath, buildGitHubPagesFileUrl, buildStorageHtmlPath, getGitHubPagesConfig } = require('../utils/githubPages');
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024 } });
 const router = express.Router();
@@ -40,12 +40,8 @@ const isLikelyVideoPreviewUrl = (value) => {
   return /(?:youtube\.com|youtu\.be)\//.test(text);
 };
 
-const GHP_TOKEN = process.env.GHPAGES_TOKEN;
-const GHP_OWNER = process.env.GHPAGES_OWNER;
-const GHP_REPO = process.env.GHPAGES_REPO;
-const GHP_BRANCH = process.env.GHPAGES_BRANCH || 'main';
-const GHP_BASE_URL = process.env.GHPAGES_BASE_URL;
-const octokit = GHP_TOKEN ? new Octokit({ auth: GHP_TOKEN }) : null;
+const ghPagesConfig = getGitHubPagesConfig();
+const octokit = ghPagesConfig.token ? new Octokit({ auth: ghPagesConfig.token }) : null;
 
 // POST /api/upload
 router.post('/upload', upload.fields([
@@ -189,7 +185,7 @@ router.post('/upload', upload.fields([
 
     const isVipFile = tipoFinal === 'vip';
     let fileUrl = null;
-    if (!isVipFile && octokit && GHP_OWNER && GHP_REPO) {
+    if (!isVipFile && octokit && ghPagesConfig.owner && ghPagesConfig.repo) {
       try {
         const filePath = buildGitHubPagesFilePath({
           id,
@@ -201,16 +197,23 @@ router.post('/upload', upload.fields([
           personalization: false,
         });
         const contentBase64 = Buffer.from(htmlContent || htmlFile.buffer.toString('utf8'), 'utf8').toString('base64');
-        const params = { owner: GHP_OWNER, repo: GHP_REPO, path: filePath, message: `Add file ${filePath}`, content: contentBase64, branch: GHP_BRANCH };
+        const params = {
+          owner: ghPagesConfig.owner,
+          repo: ghPagesConfig.repo,
+          path: filePath,
+          message: `Add file ${filePath}`,
+          content: contentBase64,
+          branch: ghPagesConfig.branch,
+        };
         try {
-          const existing = await octokit.repos.getContent({ owner: GHP_OWNER, repo: GHP_REPO, path: filePath, ref: GHP_BRANCH });
+          const existing = await octokit.repos.getContent({ owner: ghPagesConfig.owner, repo: ghPagesConfig.repo, path: filePath, ref: ghPagesConfig.branch });
           if (existing && existing.data && existing.data.sha) params.sha = existing.data.sha;
         } catch (e) {}
         await octokit.repos.createOrUpdateFileContents(params);
         fileUrl = buildGitHubPagesFileUrl({
-          owner: GHP_OWNER,
-          repo: GHP_REPO,
-          baseUrl: GHP_BASE_URL,
+          owner: ghPagesConfig.owner,
+          repo: ghPagesConfig.repo,
+          baseUrl: ghPagesConfig.baseUrl,
           path: filePath,
         });
       } catch (e) {
