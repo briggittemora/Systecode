@@ -82,8 +82,12 @@ const limiter = rateLimit({
   },
 });
 
-// Apply rate limiting only to API routes to avoid limiting static assets or SPA root page.
-app.use('/api', limiter);
+// Apply rate limiting only to mutating API requests so normal read-heavy page loads are not blocked.
+app.use('/api', (req, res, next) => {
+  const method = String(req.method || '').toUpperCase();
+  if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') return next();
+  return limiter(req, res, next);
+});
 
 // Serve built frontend (Vite) when available.
 // Prefer backend/dist, then dist/ at repo root, then frontend/dist.
