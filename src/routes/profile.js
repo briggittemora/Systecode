@@ -253,6 +253,8 @@ const isVipRecord = (rec) => {
   return tipoRaw === 'vip' || (Number.isFinite(p) && p > 0) || String(rec?.epago || '').trim().toLowerCase() === 'vip';
 };
 
+const PROFILE_FILE_SELECT_COLUMNS = 'id,filename,file_data,categoria,tipo,epago,descripcion,preview_image_url,preview_video_url,supabase_url,file_url,language,created_at,downloads,price_usd,user_id';
+
 router.get('/me/files', async (req, res) => {
   try {
     const user = await getAuthUser(req, res);
@@ -267,7 +269,7 @@ router.get('/me/files', async (req, res) => {
 
     const { data, error } = await withSupabaseRetry(async () => supabaseDB
       .from('html_files')
-      .select('*')
+      .select(PROFILE_FILE_SELECT_COLUMNS)
       .eq('user_id', dbUserId)
       .order('created_at', { ascending: false }), {
       attempts: 3,

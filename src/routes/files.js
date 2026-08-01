@@ -65,6 +65,8 @@ const normalizeFileLanguage = (value) => {
   return null;
 };
 
+const FILE_SELECT_COLUMNS = 'id,filename,file_data,categoria,tipo,epago,descripcion,preview_image_url,preview_video_url,supabase_url,file_url,language,created_at,downloads,price_usd,user_id';
+
 const tryFindFileByIdOrSlug = async (id) => {
   const rawId = String(id || '').trim();
   if (!rawId) return null;
@@ -79,7 +81,7 @@ const tryFindFileByIdOrSlug = async (id) => {
 
   for (const candidate of candidates) {
     try {
-      const { data, error } = await withSupabaseRetry(async () => supabaseDB.from('html_files').select('*').eq('id', candidate).limit(1).single(), {
+      const { data, error } = await withSupabaseRetry(async () => supabaseDB.from('html_files').select(FILE_SELECT_COLUMNS).eq('id', candidate).limit(1).single(), {
         attempts: 3,
         baseDelayMs: 250,
         logPrefix: '[files-lookup]',
@@ -93,7 +95,7 @@ const tryFindFileByIdOrSlug = async (id) => {
   // Fallback: support legacy slug style if there is an id-like string that may have been stored as a slug.
   if (rawId && rawId.length > 0 && !numericId) {
     try {
-      const { data, error } = await withSupabaseRetry(async () => supabaseDB.from('html_files').select('*'), {
+      const { data, error } = await withSupabaseRetry(async () => supabaseDB.from('html_files').select(FILE_SELECT_COLUMNS), {
         attempts: 3,
         baseDelayMs: 250,
         logPrefix: '[files-lookup-slug]',
@@ -538,7 +540,7 @@ router.get('/files', async (req, res) => {
     const start = parseInt(offset, 10) || 0;
     const lim = Math.min(parseInt(limit, 10) || 50, 1000);
     const runListQuery = async (includeLanguageFilter) => {
-      let query = supabaseDB.from('html_files').select('*').order('created_at', { ascending: false });
+      let query = supabaseDB.from('html_files').select(FILE_SELECT_COLUMNS).order('created_at', { ascending: false });
       // Search against filename and descripcion columns
       if (search) {
         const s = search.replace(/%/g, '\\%');
@@ -586,14 +588,6 @@ router.get('/files', async (req, res) => {
       }
     }
 
-    // Resolve uploader robustly for legacy rows too (id/supabase_user_id/email).
-    let resolveUploader = () => null;
-    try {
-      resolveUploader = await buildUploaderResolver(data || []);
-    } catch (e) {
-      // ignore uploader failures
-    }
-
     // Map DB columns to frontend expected fields
     const mapped = (data || []).map((rec) => {
       const filename = rec.name || rec.filename || rec.file_url || '';
@@ -638,7 +632,7 @@ router.get('/files', async (req, res) => {
         downloads: rec.downloads || 0,
         likes: likesCountMap[rec.id] || 0,
         raw: sanitizedRaw,
-        uploader: resolveUploader(rec),
+        uploader: null,
       };
     });
 
@@ -668,9 +662,6 @@ router.get('/file/:id', async (req, res) => {
     const preview_video_url = sanitizeUrl(rec.preview_video_url || null);
     const tutorial_url = sanitizeUrl(rec.tutorial_url || null);
     const html_url = sanitizeUrl(rec.html_url || rec.file_url || rec.supabase_url || null);
-    const htmlSource = await fetchTextWithTimeout(html_url);
-    const detectedImages = collectAssetUrls(htmlSource, 'image');
-    const detectedAudio = collectAssetUrls(htmlSource, 'audio');
     const rawEpago2 = (rec && typeof rec.epago !== 'undefined' && rec.epago !== null) ? String(rec.epago).trim().toLowerCase() : null;
     const explicitFree2 = rawEpago2 === 'gratuito' || rawEpago2 === 'gratis' || rawEpago2 === 'free';
     const priceUsd2 = getVipFilePriceUsd(rec);
@@ -698,10 +689,6 @@ router.get('/file/:id', async (req, res) => {
       preview_url,
       preview_image_url,
       preview_video_url,
-      detected_assets: {
-        images: detectedImages,
-        audio: detectedAudio,
-      },
       tutorial_url,
       tutorial_title: rec.tutorial_title || null,
       html_url,
@@ -717,13 +704,6 @@ router.get('/file/:id', async (req, res) => {
       const { data: likeRows, error: likeErr } = await supabaseDB.from('file_likes').select('file_id').eq('file_id', rec.id);
       if (!likeErr && Array.isArray(likeRows)) mapped.likes = likeRows.length;
     } catch (e) {}
-    // include uploader info with legacy fallbacks (id/supabase_user_id/email)
-    try {
-      const resolveUploader = await buildUploaderResolver([rec]);
-      mapped.uploader = resolveUploader(rec);
-    } catch (e) {
-      // ignore
-    }
     return res.json({ data: mapped });
   } catch (e) {
     console.error(e);
