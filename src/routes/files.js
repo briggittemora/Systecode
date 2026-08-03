@@ -588,6 +588,8 @@ router.get('/files', async (req, res) => {
       }
     }
 
+    const resolveUploader = await buildUploaderResolver(data || []);
+
     // Map DB columns to frontend expected fields
     const mapped = (data || []).map((rec) => {
       const filename = rec.name || rec.filename || rec.file_url || '';
@@ -632,7 +634,7 @@ router.get('/files', async (req, res) => {
         downloads: rec.downloads || 0,
         likes: likesCountMap[rec.id] || 0,
         raw: sanitizedRaw,
-        uploader: null,
+        uploader: resolveUploader(rec),
       };
     });
 
@@ -677,6 +679,7 @@ router.get('/file/:id', async (req, res) => {
       preview_video_url,
       tutorial_url,
     };
+    const resolveUploader = await buildUploaderResolver([rec]);
     const mapped = {
       id: rec.id,
       name: rawName || filename || `Archivo ${rec.id}`,
@@ -697,7 +700,7 @@ router.get('/file/:id', async (req, res) => {
       downloads: rec.downloads || 0,
       likes: 0,
       raw: sanitizedRaw,
-      uploader: null,
+      uploader: resolveUploader(rec),
     };
     // fallback single-file likes
     try {
