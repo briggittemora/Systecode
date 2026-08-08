@@ -29,9 +29,9 @@ const pickSupabaseUrl = (preferred, fallback, label) => {
 const SUPABASE_DB_URL = pickSupabaseUrl(process.env.SUPABASE_DB_URL, process.env.SUPABASE_URL, 'SUPABASE_DB_URL');
 const SUPABASE_DB_SERVICE_ROLE_KEY = process.env.SUPABASE_DB_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-// Storage project (where buckets live)
-const SUPABASE_STORAGE_URL = pickSupabaseUrl(process.env.SUPABASE_STORAGE_URL, process.env.SUPABASE_URL, 'SUPABASE_STORAGE_URL');
-const SUPABASE_STORAGE_SERVICE_ROLE_KEY = process.env.SUPABASE_STORAGE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
+// Storage project (where buckets live). Prefer DB project config unless a separate storage project is explicitly known to work.
+const SUPABASE_STORAGE_URL = pickSupabaseUrl(process.env.SUPABASE_DB_URL, process.env.SUPABASE_URL, 'SUPABASE_STORAGE_URL');
+const SUPABASE_STORAGE_SERVICE_ROLE_KEY = SUPABASE_DB_SERVICE_ROLE_KEY;
 
 const SUPABASE_STORAGE_BUCKET = process.env.SUPABASE_STORAGE_BUCKET || 'files';
 

@@ -273,7 +273,7 @@ router.post('/upload', upload.fields([
 
         if (msg.toLowerCase().includes('price_usd') && msg.toLowerCase().includes('does not exist')) delete retryPayload.price_usd;
         if (msg.toLowerCase().includes('language') && msg.toLowerCase().includes('does not exist')) delete retryPayload.language;
-        if (msg.toLowerCase().includes('supabase_user_id') && msg.toLowerCase().includes('does not exist')) delete retryPayload.supabase_user_id;
+        if (msg.toLowerCase().includes('supabase_user_id') && (msg.toLowerCase().includes('does not exist') || msg.toLowerCase().includes('could not find') || msg.toLowerCase().includes('schema cache'))) delete retryPayload.supabase_user_id;
 
         if (Object.keys(retryPayload).length !== Object.keys(insertPayload).length) {
           const retry = await supabaseDB.from('html_files').insert([retryPayload]).select();
