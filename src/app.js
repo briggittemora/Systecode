@@ -82,6 +82,25 @@ const limiter = rateLimit({
   },
 });
 
+const getPublicSupabaseConfig = () => {
+  const supabaseUrl = process.env.SUPABASE_URL || process.env.SUPABASE_DB_URL || process.env.VITE_SUPABASE_URL || '';
+  const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_PUBLIC_KEY || process.env.VITE_SUPABASE_ANON_KEY || '';
+  return {
+    supabaseUrl: String(supabaseUrl || '').trim() || null,
+    supabaseAnonKey: String(supabaseAnonKey || '').trim() || null,
+  };
+};
+
+const injectPublicConfig = (html) => {
+  const config = getPublicSupabaseConfig();
+  const payload = JSON.stringify({ supabaseUrl: config.supabaseUrl, supabaseAnonKey: config.supabaseAnonKey });
+  const script = `<script>window.__APP_PUBLIC_CONFIG__=${payload};</script>`;
+  if (html.includes('</head>')) {
+    return html.replace('</head>', `${script}</head>`);
+  }
+  return `${script}${html}`;
+};
+
 // Apply rate limiting only to mutating API requests so normal read-heavy page loads are not blocked.
 app.use('/api', (req, res, next) => {
   const method = String(req.method || '').toUpperCase();
@@ -137,7 +156,15 @@ if (distPath) {
 
   // SPA fallback: serve index.html for non-API routes.
   app.get(/^\/(?!api\/).*/, (req, res) => {
-    return res.sendFile(path.join(distPath, 'index.html'));
+    try {
+      const indexPath = path.join(distPath, 'index.html');
+      const html = fs.readFileSync(indexPath, 'utf8');
+      res.type('html');
+      return res.send(injectPublicConfig(html));
+    } catch (e) {
+      console.error('[static] failed to serve injected index.html', e && e.message ? e.message : e);
+      return res.sendFile(path.join(distPath, 'index.html'));
+    }
   });
 } else {
   // If we are NOT serving the SPA, keep the legacy redirect route.

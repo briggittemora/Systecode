@@ -11,6 +11,20 @@ function ensureDataDir() {
   if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 }
 
+router.get('/config/public', async (req, res) => {
+  try {
+    const supabaseUrl = process.env.SUPABASE_URL || process.env.SUPABASE_DB_URL || process.env.VITE_SUPABASE_URL || null;
+    const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_PUBLIC_KEY || process.env.VITE_SUPABASE_ANON_KEY || null;
+    return res.json({
+      supabaseUrl: supabaseUrl || null,
+      supabaseAnonKey: supabaseAnonKey || null,
+    });
+  } catch (e) {
+    console.error('[config] GET public failed', e && e.message);
+    return res.status(500).json({ error: 'failed' });
+  }
+});
+
 router.get('/config/phrases', async (req, res) => {
   try {
     ensureDataDir();
