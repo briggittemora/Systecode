@@ -77,37 +77,56 @@ router.post('/upload', upload.fields([
 
     // upload helper - more robust: handle upload errors, get public url from response
     const uploadToBucket = async (path, buffer, mime) => {
-      // try upload (don't upsert by default)
-      let upRes = await supabaseStorage.storage.from(SUPABASE_STORAGE_BUCKET).upload(path, buffer, { contentType: mime, upsert: false });
-      if (upRes.error) {
-        // if object exists or conflict, try with upsert=true
-        const msg = String(upRes.error.message || upRes.error || '').toLowerCase();
-        if (msg.includes('already exists') || msg.includes('object already exists') || msg.includes('file exists')) {
-          const retry = await supabaseStorage.storage.from(SUPABASE_STORAGE_BUCKET).upload(path, buffer, { contentType: mime, upsert: true });
-          if (retry.error) throw retry.error;
-          upRes = retry;
-        } else {
-          throw upRes.error;
-        }
+      if (!supabaseStorage) {
+        console.warn('Supabase storage client not configured, skipping storage upload');
+        return null;
       }
 
-      // get public URL (different SDKs return shape slightly different)
       try {
-        const pub = supabaseStorage.storage.from(SUPABASE_STORAGE_BUCKET).getPublicUrl(path);
-        // new SDK: { data: { publicUrl } }, older: { publicURL }
-        const publicUrl = (pub && pub.data && (pub.data.publicUrl || pub.data.publicURL)) || pub && (pub.publicURL || pub.publicUrl) || null;
-        if (publicUrl) return publicUrl;
+        // try upload (don't upsert by default)
+        let upRes = await supabaseStorage.storage.from(SUPABASE_STORAGE_BUCKET).upload(path, buffer, { contentType: mime, upsert: false });
+        if (upRes.error) {
+          const msg = String(upRes.error.message || upRes.error || '').toLowerCase();
+          if (msg.includes('bucket not found')) {
+            console.warn('Supabase storage bucket not found, skipping storage upload:', SUPABASE_STORAGE_BUCKET);
+            return null;
+          }
+          // if object exists or conflict, try with upsert=true
+          if (msg.includes('already exists') || msg.includes('object already exists') || msg.includes('file exists')) {
+            const retry = await supabaseStorage.storage.from(SUPABASE_STORAGE_BUCKET).upload(path, buffer, { contentType: mime, upsert: true });
+            if (retry.error) throw retry.error;
+            upRes = retry;
+          } else {
+            throw upRes.error;
+          }
+        }
+
+        // get public URL (different SDKs return shape slightly different)
+        try {
+          const pub = supabaseStorage.storage.from(SUPABASE_STORAGE_BUCKET).getPublicUrl(path);
+          // new SDK: { data: { publicUrl } }, older: { publicURL }
+          const publicUrl = (pub && pub.data && (pub.data.publicUrl || pub.data.publicURL)) || pub && (pub.publicURL || pub.publicUrl) || null;
+          if (publicUrl) return publicUrl;
+        } catch (e) {
+          // ignore and fallback
+        }
+
+        // fallback: construct public path if storage URL known
+        const storageBase = process.env.SUPABASE_STORAGE_URL || process.env.SUPABASE_URL || '';
+        if (storageBase) {
+          return `${storageBase.replace(/\/$/, '')}/storage/v1/object/public/${SUPABASE_STORAGE_BUCKET}/${encodeURIComponent(path)}`;
+        }
+
+        return null;
       } catch (e) {
-        // ignore and fallback
+        const msg = String(e?.message || e || '').toLowerCase();
+        if (msg.includes('invalid compact jws') || msg.includes('invalid jwt structure') || msg.includes('jwt not in base64url format')) {
+          console.warn('Supabase storage auth invalid, skipping storage upload:', e?.message || e);
+          return null;
+        }
+        console.warn('Supabase storage upload failed, skipping storage upload:', e?.message || e);
+        return null;
       }
-
-      // fallback: construct public path if storage URL known
-      const storageBase = process.env.SUPABASE_STORAGE_URL || process.env.SUPABASE_URL || '';
-      if (storageBase) {
-        return `${storageBase.replace(/\/$/, '')}/storage/v1/object/public/${SUPABASE_STORAGE_BUCKET}/${encodeURIComponent(path)}`;
-      }
-
-      return null;
     };
 
     let previewImagePublicUrl = null;
@@ -151,6 +170,7 @@ router.post('/upload', upload.fields([
       htmlPublicUrl = await uploadToBucket(htmlPath, htmlFile.buffer, htmlFile.mimetype);
     } catch (e) {
       console.warn('Supabase html upload error:', e.message || e);
+      htmlPublicUrl = null;
     }
 
     // decide tipo and epago to store
@@ -245,7 +265,7 @@ router.post('/upload', upload.fields([
     try {
       const insertPayload = {
         filename: name,
-        file_data: htmlPath,
+        file_data: htmlPublicUrl ? htmlPath : null,
         categoria: category,
         tipo: tipoFinal,
         epago: epagoToStore,

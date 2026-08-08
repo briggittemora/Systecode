@@ -875,16 +875,39 @@ router.post(
       }
 
       const uploadToBucket = async (path, buffer, mime) => {
-        let upRes = await supabaseStorage.storage.from(SUPABASE_STORAGE_BUCKET).upload(path, buffer, { contentType: mime, upsert: true });
-        if (upRes.error) throw upRes.error;
-        const pub = supabaseStorage.storage.from(SUPABASE_STORAGE_BUCKET).getPublicUrl(path);
-        const publicUrl = (pub && pub.data && (pub.data.publicUrl || pub.data.publicURL)) || (pub && (pub.publicURL || pub.publicUrl)) || null;
-        if (publicUrl) return publicUrl;
-        const storageBase = process.env.SUPABASE_STORAGE_URL || process.env.SUPABASE_URL || '';
-        if (storageBase) {
-          return `${storageBase.replace(/\/$/, '')}/storage/v1/object/public/${SUPABASE_STORAGE_BUCKET}/${encodeURIComponent(path)}`;
+        if (!supabaseStorage) {
+          console.warn('Supabase storage client not configured, skipping storage upload');
+          return null;
         }
-        return null;
+
+        try {
+          let upRes = await supabaseStorage.storage.from(SUPABASE_STORAGE_BUCKET).upload(path, buffer, { contentType: mime, upsert: true });
+          if (upRes.error) {
+            const msg = String(upRes.error.message || upRes.error || '').toLowerCase();
+            if (msg.includes('bucket not found')) {
+              console.warn('Supabase storage bucket not found, skipping storage upload:', SUPABASE_STORAGE_BUCKET);
+              return null;
+            }
+            throw upRes.error;
+          }
+
+          const pub = supabaseStorage.storage.from(SUPABASE_STORAGE_BUCKET).getPublicUrl(path);
+          const publicUrl = (pub && pub.data && (pub.data.publicUrl || pub.data.publicURL)) || (pub && (pub.publicURL || pub.publicUrl)) || null;
+          if (publicUrl) return publicUrl;
+          const storageBase = process.env.SUPABASE_STORAGE_URL || process.env.SUPABASE_URL || '';
+          if (storageBase) {
+            return `${storageBase.replace(/\/$/, '')}/storage/v1/object/public/${SUPABASE_STORAGE_BUCKET}/${encodeURIComponent(path)}`;
+          }
+          return null;
+        } catch (e) {
+          const msg = String(e?.message || e || '').toLowerCase();
+          if (msg.includes('invalid compact jws') || msg.includes('invalid jwt structure') || msg.includes('jwt not in base64url format')) {
+            console.warn('Supabase storage auth invalid, skipping storage upload:', e?.message || e);
+            return null;
+          }
+          console.warn('Supabase storage upload failed, skipping storage upload:', e?.message || e);
+          return null;
+        }
       };
 
       const uploadToCloudinary = async (folder, buffer, originalName, resourceType = 'image') => {
@@ -974,7 +997,15 @@ router.post(
           console.warn('[assets] personalization history exception:', historyErr?.message || historyErr);
         }
 
-        return res.json({ success: true, data: { id: rec.id, file_url: githubPage?.url || null, supabase_url: publicUrl, file_data: path } });
+        return res.json({
+          success: true,
+          data: {
+            id: rec.id,
+            file_url: githubPage?.url || null,
+            supabase_url: publicUrl,
+            file_data: publicUrl ? path : existingPath,
+          },
+        });
       }
 
       const { data: up, error: upErr } = await supabaseDB.from('html_files').update(updates).eq('id', rec.id).select();
@@ -1191,11 +1222,15 @@ router.delete('/file/:id', async (req, res) => {
       // Deduplicate and filter
       const uniq = Array.from(new Set(pathsToRemove)).filter(Boolean);
       if (uniq.length > 0) {
-        try {
-          const { data: remData, error: remErr } = await supabaseStorage.storage.from(bucket).remove(uniq);
-          if (remErr) console.warn('Storage remove error:', remErr.message || remErr);
-        } catch (e) {
-          console.warn('Storage remove exception:', e?.message || e);
+        if (!supabaseStorage) {
+          console.warn('Supabase storage client not configured, skipping storage remove');
+        } else {
+          try {
+            const { data: remData, error: remErr } = await supabaseStorage.storage.from(bucket).remove(uniq);
+            if (remErr) console.warn('Storage remove error:', remErr.message || remErr);
+          } catch (e) {
+            console.warn('Storage remove exception:', e?.message || e);
+          }
         }
       }
     } catch (e) {
@@ -1301,13 +1336,23 @@ router.get('/file/:id/download', async (req, res) => {
     const looksLikeHtml = (u) => /\.html?(?:$|\?)/i.test(String(u || '')) || (rec.file_data && /\.html?$/i.test(String(rec.file_data || '')));
 
     const getSignedUrlForPath = async (path) => {
-      if (!path) return null;
-      const { data: signed, error: signErr } = await supabaseStorage.storage.from(SUPABASE_STORAGE_BUCKET).createSignedUrl(path, 60);
-      if (signErr || !signed) {
-        console.error('Error creating signed URL for path:', path, signErr);
+      if (!path || !supabaseStorage) return null;
+      try {
+        const { data: signed, error: signErr } = await supabaseStorage.storage.from(SUPABASE_STORAGE_BUCKET).createSignedUrl(path, 60);
+        if (signErr || !signed) {
+          console.error('Error creating signed URL for path:', path, signErr);
+          return null;
+        }
+        return signed.signedUrl || signed.signedURL;
+      } catch (e) {
+        const msg = String(e?.message || e || '').toLowerCase();
+        if (msg.includes('invalid compact jws') || msg.includes('invalid jwt structure') || msg.includes('jwt not in base64url format')) {
+          console.warn('Supabase storage auth invalid while creating signed URL:', e?.message || e);
+          return null;
+        }
+        console.error('Exception creating signed URL for path:', path, e);
         return null;
       }
-      return signed.signedUrl || signed.signedURL;
     };
 
     // Helper to stream a URL (fetch and pipe to response with Content-Disposition)
@@ -1368,30 +1413,44 @@ router.get('/file/:id/download', async (req, res) => {
 
             // storage public path: /storage/v1/object/public/<bucket>/<path>
             const m = String(candidate).match(/storage\/v1\/object\/public\/([^\/]+)\/(.+)$/);
-            if (m) {
+            if (m && supabaseStorage) {
               const bucket = m[1];
               const objectPath = decodeURIComponent(m[2]);
               try {
                 const { data: signed, error: signErr } = await supabaseStorage.storage.from(bucket).createSignedUrl(objectPath, 60 * 60);
                 if (!signErr && signed) return signed.signedUrl || signed.signedURL;
-              } catch (e) { console.error('signed err', e); }
-              return candidate;
+              } catch (e) {
+                const msg = String(e?.message || e || '').toLowerCase();
+                if (msg.includes('invalid compact jws') || msg.includes('invalid jwt structure') || msg.includes('jwt not in base64url format')) {
+                  console.warn('Supabase storage auth invalid for HTML asset rewrite:', e?.message || e);
+                  return candidate;
+                }
+                console.error('signed err', e);
+              }
             }
+            if (m) return candidate;
 
             // if candidate looks like preview-images/... or preview-videos/... or other bucket paths
-            if (/^(preview-images|preview-videos|html-files)\//.test(candidate)) {
+            if (/^(preview-images|preview-videos|html-files)\//.test(candidate) && supabaseStorage) {
               const parts = candidate.split('/');
               const bucket = parts[0];
               const objectPath = parts.slice(1).join('/');
               try {
                 const { data: signed, error: signErr } = await supabaseStorage.storage.from(bucket).createSignedUrl(objectPath, 60 * 60);
                 if (!signErr && signed) return signed.signedUrl || signed.signedURL;
-              } catch (e) { console.error('signed err2', e); }
-              return candidate;
+              } catch (e) {
+                const msg = String(e?.message || e || '').toLowerCase();
+                if (msg.includes('invalid compact jws') || msg.includes('invalid jwt structure') || msg.includes('jwt not in base64url format')) {
+                  console.warn('Supabase storage auth invalid for HTML asset rewrite:', e?.message || e);
+                  return candidate;
+                }
+                console.error('signed err2', e);
+              }
             }
+            if (/^(preview-images|preview-videos|html-files)\//.test(candidate)) return candidate;
 
             // relative paths: try resolving against rec.file_data directory if available
-            if (rec.file_data) {
+            if (rec.file_data && supabaseStorage) {
               const baseDir = rec.file_data.split('/').slice(0, -1).join('/');
               const objPath = baseDir ? `${baseDir}/${candidate}` : candidate;
               try {
@@ -1502,14 +1561,19 @@ router.get('/file/:id/download', async (req, res) => {
       if (isAbsoluteUrl(url)) {
         const m = String(url).match(/storage\/v1\/object\/public\/([^\/]+)\/(.+)$/);
         if (m) {
-          const bucket = m[1];
-          const objectPath = decodeURIComponent(m[2]);
-          const { data: signed, error: signErr } = await supabaseStorage.storage.from(bucket).createSignedUrl(objectPath, 60);
-          if (signErr || !signed) {
-            console.error('Error creating signed URL (public-path):', signErr);
-            return res.status(500).json({ error: 'Could not generate download URL' });
+          if (!supabaseStorage) {
+            console.warn('Supabase storage client not configured, using public storage URL directly');
+            finalUrl = url;
+          } else {
+            const bucket = m[1];
+            const objectPath = decodeURIComponent(m[2]);
+            const { data: signed, error: signErr } = await supabaseStorage.storage.from(bucket).createSignedUrl(objectPath, 60);
+            if (signErr || !signed) {
+              console.error('Error creating signed URL (public-path):', signErr);
+              return res.status(500).json({ error: 'Could not generate download URL' });
+            }
+            finalUrl = signed.signedUrl || signed.signedURL;
           }
-          finalUrl = signed.signedUrl || signed.signedURL;
         } else {
           finalUrl = url;
         }
@@ -1622,6 +1686,9 @@ router.post('/file/:id/like', async (req, res) => {
 router.get('/storage-files', async (req, res) => {
   try {
     const bucket = process.env.SUPABASE_STORAGE_BUCKET || SUPABASE_STORAGE_BUCKET || 'files';
+    if (!supabaseStorage) {
+      return res.status(501).json({ error: 'Supabase storage not configured' });
+    }
     const { data, error } = await supabaseStorage.storage.from(bucket).list('');
     if (error) {
       console.warn('Supabase storage list error:', error.message || error);

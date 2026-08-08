@@ -2,15 +2,23 @@ const { supabaseDB } = require('../supabaseClient');
 const { withSupabaseRetry } = require('./supabaseRetry');
 
 function getBearerToken(req) {
-  const header = req.headers.authorization || req.headers.Authorization;
-  if (!header) return null;
-  const m = String(header).match(/^Bearer\s+(.+)$/i);
-  return m ? m[1] : null;
+  const header = req.headers.authorization || req.headers.Authorization || '';
+  const m = String(header).trim().match(/^Bearer\s+(.+)$/i);
+  return m ? String(m[1]).trim() : null;
+}
+
+function looksLikeJwt(token) {
+  if (!token || typeof token !== 'string') return false;
+  const trimmed = token.trim();
+  const parts = trimmed.split('.');
+  if (parts.length !== 3) return false;
+  return parts.every((part) => /^[A-Za-z0-9_-]+$/.test(part));
 }
 
 async function getSupabaseUserFromRequest(req) {
   const token = getBearerToken(req);
   if (!token) return { user: null, token: null, error: 'missing_token' };
+  if (!looksLikeJwt(token)) return { user: null, token, error: 'invalid_token_format' };
 
   try {
     const { data, error } = await withSupabaseRetry(async () => supabaseDB.auth.getUser(token), {
