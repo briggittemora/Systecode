@@ -155,10 +155,16 @@ router.post('/sync', async (req, res) => {
       authUser = null;
     }
 
+    const userId = authUser?.id || null;
+    if (!userId) {
+      return res.status(400).json({ error: 'missing_user_id' });
+    }
+
     const row = {
+      id: userId,
       email,
       name: (authUser?.user_metadata?.full_name) || (authUser?.email) || email,
-      supabase_user_id: authUser?.id || null,
+      supabase_user_id: userId,
     };
 
     try {
@@ -203,10 +209,16 @@ router.post('/profile/sync', async (req, res) => {
       authUser = null;
     }
 
+    const userId = authUser?.id || null;
+    if (!userId) {
+      return res.status(400).json({ error: 'missing_user_id' });
+    }
+
     const row = {
+      id: userId,
       email,
       name: (authUser?.user_metadata?.full_name) || (authUser?.email) || email,
-      supabase_user_id: authUser?.id || null,
+      supabase_user_id: userId,
     };
 
     try {

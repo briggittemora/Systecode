@@ -1,0 +1,1 @@
+import{r,j as t,u as a}from"./radix-CKgpsSS2.js";import{e as i,j as l}from"./index-DRNMuQuy.js";const m=l("text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"),d=r.forwardRef(({className:e,...s},o)=>t.jsx(a,{ref:o,className:i(m(),e),...s}));d.displayName=a.displayName;export{d as L};

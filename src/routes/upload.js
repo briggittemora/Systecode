@@ -243,7 +243,7 @@ router.post('/upload', upload.fields([
     // insert metadata - use DB column names (spanish) and fall back gracefully when the table is missing newer columns
     let dbRecord = null;
     try {
-      const basePayload = {
+      const insertPayload = {
         filename: name,
         file_data: htmlPath,
         categoria: category,
@@ -254,13 +254,11 @@ router.post('/upload', upload.fields([
         preview_video_url: previewVideoPublicUrl,
         supabase_url: isVipFile ? null : htmlPublicUrl,
         file_url: isVipFile ? null : fileUrl,
+        supabase_user_id: user?.id || null,
       };
 
-      const insertPayload = { ...basePayload };
-      if (dbUser?.id) {
+      if (dbUser?.id && /^\d+$/.test(String(dbUser.id))) {
         insertPayload.user_id = dbUser.id;
-      } else if (user?.id) {
-        insertPayload.user_id = user.id;
       }
 
       if (tipoFinal === 'vip') {
