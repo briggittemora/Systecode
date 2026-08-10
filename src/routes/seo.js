@@ -53,8 +53,8 @@ router.get('/sitemap.xml', async (req, res) => {
     const base = buildBaseUrl(req);
     const { data, error } = await supabaseDB
       .from('html_files')
-      .select('id, filename, file_data, updated_at, created_at')
-      .order('updated_at', { ascending: false })
+      .select('id, filename, file_data')
+      .order('id', { ascending: false })
       .limit(20000);
 
     if (error) {
