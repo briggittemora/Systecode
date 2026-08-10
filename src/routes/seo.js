@@ -53,12 +53,17 @@ router.get('/sitemap.xml', async (req, res) => {
     const base = buildBaseUrl(req);
     const { data, error } = await supabaseDB
       .from('html_files')
-      .select('id, name, filename, file_data, tipo, categoria, descripcion, file_url, html_url, supabase_url, updated_at, created_at')
+      .select('id, filename, file_data, updated_at, created_at')
       .order('updated_at', { ascending: false })
       .limit(20000);
 
     if (error) {
       console.warn('[sitemap] supabase error', error.message || error);
+    }
+    if (Array.isArray(data)) {
+      console.log('[sitemap] html_files rows', data.length);
+    } else {
+      console.warn('[sitemap] html_files returned non-array data', data);
     }
 
     const urls = [];
