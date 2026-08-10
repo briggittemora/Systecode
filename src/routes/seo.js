@@ -13,10 +13,26 @@ const SEO_CATEGORY_ROUTES = [
   { slug: 'otro', title: 'Otras Plantillas HTML', description: 'Explora otras plantillas HTML disponibles en SysteCode.', priority: '0.6' },
 ];
 
+const PUBLIC_PAGES = [
+  { path: '/', priority: '1.0' },
+  { path: '/donar', priority: '0.6' },
+  { path: '/miembro', priority: '0.6' },
+];
+
+const buildBaseUrl = (req) => {
+  const configured = process.env.CLIENT_URL_PROD || process.env.VITE_SITE_URL || process.env.BASE_URL || null;
+  if (configured) return String(configured).replace(/\/*$/, '');
+  const host = req.get('host') || 'localhost:5000';
+  const proto = req.protocol || 'http';
+  return `${proto}://${host}`;
+};
+
+const escapeXml = (value) => String(value || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+
 // robots.txt
 router.get('/robots.txt', (req, res) => {
-  const host = req.get('host') || 'codigossyste.onrender.com';
-  const sitemapUrl = `https://${host}/sitemap.xml`;
+  const baseUrl = buildBaseUrl(req);
+  const sitemapUrl = `${baseUrl}/sitemap.xml`;
   const lines = [
     'User-agent: *',
     'Disallow:',
@@ -25,14 +41,13 @@ router.get('/robots.txt', (req, res) => {
   res.type('text/plain').send(lines.join('\n'));
 });
 
-// sitemap.xml (simple dynamic sitemap from DB)
+// sitemap.xml (dynamic sitemap from DB)
 router.get('/sitemap.xml', async (req, res) => {
   try {
-    const base = req.protocol + '://' + (req.get('host') || 'codigossyste.onrender.com');
-    // Query public files (limit to 20000)
+    const base = buildBaseUrl(req);
     const { data, error } = await supabaseDB
-      .from('files')
-      .select('id, slug, updated_at')
+      .from('html_files')
+      .select('id, slug, filename, file_data, updated_at, created_at')
       .order('updated_at', { ascending: false })
       .limit(20000);
 
@@ -41,21 +56,39 @@ router.get('/sitemap.xml', async (req, res) => {
     }
 
     const urls = [];
-    // add homepage
-    urls.push({ loc: base + '/', priority: '1.0' });
+    const seen = new Set();
+
+    for (const page of PUBLIC_PAGES) {
+      const loc = `${base}${page.path}`;
+      if (!seen.has(loc)) {
+        seen.add(loc);
+        urls.push({ loc, priority: page.priority });
+      }
+    }
+
     for (const category of SEO_CATEGORY_ROUTES) {
-      urls.push({ loc: `${base}/categorias/${encodeURIComponent(category.slug)}`, priority: category.priority });
+      const loc = `${base}/categorias/${encodeURIComponent(category.slug)}`;
+      if (!seen.has(loc)) {
+        seen.add(loc);
+        urls.push({ loc, priority: category.priority });
+      }
     }
 
     if (Array.isArray(data)) {
       for (const row of data) {
-        try {
-          const id = String(row.id);
-          const slug = String(row.slug || '').replace(/\s+/g, '-');
-          const loc = `${base}/archivos/${encodeURIComponent(slug)}/${encodeURIComponent(id)}`;
-          const lastmod = row.updated_at ? new Date(row.updated_at).toISOString() : null;
-          urls.push({ loc, lastmod, priority: '0.6' });
-        } catch (e) {}
+        if (!row || !row.id) continue;
+        const id = String(row.id);
+        const rawSlug = String(row.slug || row.filename || row.file_data || row.id || '').trim();
+        const slug = rawSlug
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, '-')
+          .replace(/(^-|-$)/g, '') || id;
+        const loc = `${base}/archivos/${encodeURIComponent(slug)}/${encodeURIComponent(id)}`;
+        if (seen.has(loc)) continue;
+        seen.add(loc);
+        const lastmodSource = row.updated_at || row.created_at;
+        const lastmod = lastmodSource ? new Date(lastmodSource).toISOString() : null;
+        urls.push({ loc, lastmod, priority: '0.6' });
       }
     }
 
@@ -66,9 +99,9 @@ router.get('/sitemap.xml', async (req, res) => {
 
     for (const u of urls) {
       xmlParts.push('  <url>');
-      xmlParts.push(`    <loc>${u.loc}</loc>`);
-      if (u.lastmod) xmlParts.push(`    <lastmod>${u.lastmod}</lastmod>`);
-      if (u.priority) xmlParts.push(`    <priority>${u.priority}</priority>`);
+      xmlParts.push(`    <loc>${escapeXml(u.loc)}</loc>`);
+      if (u.lastmod) xmlParts.push(`    <lastmod>${escapeXml(u.lastmod)}</lastmod>`);
+      if (u.priority) xmlParts.push(`    <priority>${escapeXml(u.priority)}</priority>`);
       xmlParts.push('  </url>');
     }
 
@@ -76,7 +109,7 @@ router.get('/sitemap.xml', async (req, res) => {
     res.type('application/xml').send(xmlParts.join('\n'));
   } catch (e) {
     console.error('[sitemap] exception', e?.message || e);
-    res.status(500).send('');
+    res.status(500).type('application/xml').send('<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"></urlset>');
   }
 });
 
@@ -128,14 +161,14 @@ router.get('/archivos/:slug/:id', async (req, res, next) => {
     const { id } = req.params;
     const cleanedId = String(id).replace(/[^0-9a-zA-Z-_]/g, '');
     // fetch file record
-    const { data, error } = await supabaseDB.from('files').select('*').eq('id', cleanedId).limit(1).single();
+    const { data, error } = await supabaseDB.from('html_files').select('*').eq('id', cleanedId).limit(1).single();
     let title = 'Plantillas HTML - SysteCode';
     let description = 'Descubre plantillas HTML gratuitas y premium en SysteCode.';
     let image = `${req.protocol}://${req.get('host')}/Systecode.png`;
     if (!error && data) {
       title = data.name ? `${String(data.name).trim()} | SysteCode` : title;
-      description = data.description ? String(data.description).trim().slice(0, 200) : description;
-      if (data.preview_url) image = data.preview_url;
+      description = data.descripcion ? String(data.descripcion).trim().slice(0, 200) : (data.description ? String(data.description).trim().slice(0, 200) : description);
+      if (data.preview_image_url || data.preview_url) image = data.preview_image_url || data.preview_url;
     }
 
     // try to read SPA index.html from likely dist locations (backend/dist, root dist, frontend/dist)
