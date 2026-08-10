@@ -27,6 +27,12 @@ const buildBaseUrl = (req) => {
   return `${proto}://${host}`;
 };
 
+const buildFileSlug = (rawValue, fallbackId) => {
+  const raw = String(rawValue || '').trim();
+  const slug = raw.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+  return slug || String(fallbackId);
+};
+
 const escapeXml = (value) => String(value || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
 
 // robots.txt
@@ -47,7 +53,7 @@ router.get('/sitemap.xml', async (req, res) => {
     const base = buildBaseUrl(req);
     const { data, error } = await supabaseDB
       .from('html_files')
-      .select('id, slug, filename, file_data, updated_at, created_at')
+      .select('id, name, filename, file_data, tipo, categoria, descripcion, file_url, html_url, supabase_url, updated_at, created_at')
       .order('updated_at', { ascending: false })
       .limit(20000);
 
@@ -78,11 +84,8 @@ router.get('/sitemap.xml', async (req, res) => {
       for (const row of data) {
         if (!row || !row.id) continue;
         const id = String(row.id);
-        const rawSlug = String(row.slug || row.filename || row.file_data || row.id || '').trim();
-        const slug = rawSlug
-          .toLowerCase()
-          .replace(/[^a-z0-9]+/g, '-')
-          .replace(/(^-|-$)/g, '') || id;
+        const rawSlug = String(row.name || row.filename || row.file_data || row.id || '').trim();
+        const slug = buildFileSlug(rawSlug, id);
         const loc = `${base}/archivos/${encodeURIComponent(slug)}/${encodeURIComponent(id)}`;
         if (seen.has(loc)) continue;
         seen.add(loc);
