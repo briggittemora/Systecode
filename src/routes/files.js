@@ -615,6 +615,14 @@ router.get('/files', async (req, res) => {
         preview_video_url,
         tutorial_url,
       };
+      // fallback uploader object using uploader_email/uploader_name when resolver returns null
+      const resolvedUploader = resolveUploader(rec);
+      const fallbackUploader = {
+        id: null,
+        email: rec.uploader_email || rec.user_email || rec.email || null,
+        name: rec.uploader_name || rec.name || rec.filename || rec.user_email || rec.email || null,
+        role: null,
+      };
       return {
         id: rec.id,
         name: rawName || filename || `Archivo ${rec.id}`,
@@ -634,7 +642,7 @@ router.get('/files', async (req, res) => {
         downloads: rec.downloads || 0,
         likes: likesCountMap[rec.id] || 0,
         raw: sanitizedRaw,
-        uploader: resolveUploader(rec),
+        uploader: resolvedUploader || fallbackUploader,
       };
     });
 
@@ -680,6 +688,15 @@ router.get('/file/:id', async (req, res) => {
       tutorial_url,
     };
     const resolveUploader = await buildUploaderResolver([rec]);
+    const resolvedUploader = await buildUploaderResolver([rec]);
+    const upl = resolvedUploader(rec) || null;
+    const fallbackUploader = {
+      id: null,
+      email: rec.uploader_email || rec.user_email || rec.email || null,
+      name: rec.uploader_name || rec.name || rec.filename || rec.user_email || rec.email || null,
+      role: null,
+    };
+
     const mapped = {
       id: rec.id,
       name: rawName || filename || `Archivo ${rec.id}`,
@@ -700,7 +717,7 @@ router.get('/file/:id', async (req, res) => {
       downloads: rec.downloads || 0,
       likes: 0,
       raw: sanitizedRaw,
-      uploader: resolveUploader(rec),
+      uploader: upl || fallbackUploader,
     };
     // fallback single-file likes
     try {
