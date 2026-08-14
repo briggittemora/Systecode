@@ -276,8 +276,9 @@ router.post('/upload', upload.fields([
         file_url: isVipFile ? null : fileUrl,
         supabase_user_id: user?.id || null,
         // Guardar email/nombre del uploader para resolvers que busquen por email
-        uploader_email: email || null,
-        uploader_name: (user && (user.user_metadata?.full_name || user.user_metadata?.name)) || user?.email || null,
+        // Preferir el email de la fila `users` (dbUser) o el `user` autenticado
+        uploader_email: (dbUser && dbUser.email) || user?.email || email || null,
+        uploader_name: (user && (user.user_metadata?.full_name || user.user_metadata?.name)) || (dbUser && dbUser.email) || user?.email || null,
       };
 
       if (dbUser?.id && /^\d+$/.test(String(dbUser.id))) {
