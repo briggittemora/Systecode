@@ -262,6 +262,14 @@ router.post('/upload', upload.fields([
 
     // insert metadata - use DB column names (spanish) and fall back gracefully when the table is missing newer columns
     let dbRecord = null;
+    // Detect once per-request whether the html_files table contains uploader columns
+    let _htmlFilesHasUploaderCols = true;
+    try {
+      const probe = await supabaseDB.from('html_files').select('uploader_email').limit(1);
+      if (probe && probe.error) _htmlFilesHasUploaderCols = false;
+    } catch (e) {
+      _htmlFilesHasUploaderCols = false;
+    }
     try {
       const insertPayload = {
         filename: name,
@@ -277,8 +285,11 @@ router.post('/upload', upload.fields([
         supabase_user_id: user?.id || null,
         // Guardar email/nombre del uploader para resolvers que busquen por email
         // Preferir el email de la fila `users` (dbUser) o el `user` autenticado
-        uploader_email: (dbUser && dbUser.email) || user?.email || email || null,
-        uploader_name: (user && (user.user_metadata?.full_name || user.user_metadata?.name)) || (dbUser && dbUser.email) || user?.email || null,
+        // only include uploader columns if the table supports them
+        ...( _htmlFilesHasUploaderCols ? {
+          uploader_email: (dbUser && dbUser.email) || user?.email || email || null,
+          uploader_name: (user && (user.user_metadata?.full_name || user.user_metadata?.name)) || (dbUser && dbUser.email) || user?.email || null,
+        } : {}),
       };
 
       if (dbUser?.id && /^\d+$/.test(String(dbUser.id))) {
