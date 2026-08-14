@@ -295,9 +295,13 @@ router.post('/upload', upload.fields([
         const msg = String(insertError.message || insertError || '');
         const retryPayload = { ...insertPayload };
 
-        if (msg.toLowerCase().includes('price_usd') && msg.toLowerCase().includes('does not exist')) delete retryPayload.price_usd;
-        if (msg.toLowerCase().includes('language') && msg.toLowerCase().includes('does not exist')) delete retryPayload.language;
-        if (msg.toLowerCase().includes('supabase_user_id') && (msg.toLowerCase().includes('does not exist') || msg.toLowerCase().includes('could not find') || msg.toLowerCase().includes('schema cache'))) delete retryPayload.supabase_user_id;
+        const lower = msg.toLowerCase();
+        if (lower.includes('price_usd') && lower.includes('does not exist')) delete retryPayload.price_usd;
+        if (lower.includes('language') && lower.includes('does not exist')) delete retryPayload.language;
+        if (lower.includes('supabase_user_id') && (lower.includes('does not exist') || lower.includes('could not find') || lower.includes('schema cache'))) delete retryPayload.supabase_user_id;
+        // handle older schemas that don't have uploader_email/uploader_name
+        if (lower.includes('uploader_email') && (lower.includes('does not exist') || lower.includes('could not find') || lower.includes('schema cache'))) delete retryPayload.uploader_email;
+        if (lower.includes('uploader_name') && (lower.includes('does not exist') || lower.includes('could not find') || lower.includes('schema cache'))) delete retryPayload.uploader_name;
 
         if (Object.keys(retryPayload).length !== Object.keys(insertPayload).length) {
           const retry = await supabaseDB.from('html_files').insert([retryPayload]).select();

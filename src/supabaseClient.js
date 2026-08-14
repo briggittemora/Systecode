@@ -43,9 +43,22 @@ if (!SUPABASE_STORAGE_URL || !SUPABASE_STORAGE_SERVICE_ROLE_KEY) {
 }
 
 const supabaseDB = createClient(SUPABASE_DB_URL, SUPABASE_DB_SERVICE_ROLE_KEY);
-const supabaseStorage = (SUPABASE_STORAGE_URL && SUPABASE_STORAGE_SERVICE_ROLE_KEY)
-  ? createClient(SUPABASE_STORAGE_URL, SUPABASE_STORAGE_SERVICE_ROLE_KEY)
-  : null;
+
+const looksLikeJwt = (k) => {
+  if (!k || typeof k !== 'string') return false;
+  // JWTs have three dot-separated parts and are base64-like; check minimally
+  const parts = k.split('.');
+  return parts.length === 3 && parts[0].length > 10;
+};
+
+let supabaseStorage = null;
+if (SUPABASE_STORAGE_URL && SUPABASE_STORAGE_SERVICE_ROLE_KEY) {
+  if (!looksLikeJwt(SUPABASE_STORAGE_SERVICE_ROLE_KEY)) {
+    console.warn('Warning: SUPABASE_STORAGE_SERVICE_ROLE_KEY does not look like a JWT. Skipping storage client init to avoid auth errors.');
+  } else {
+    supabaseStorage = createClient(SUPABASE_STORAGE_URL, SUPABASE_STORAGE_SERVICE_ROLE_KEY);
+  }
+}
 
 module.exports = {
   supabaseDB,
