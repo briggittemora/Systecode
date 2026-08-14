@@ -292,7 +292,11 @@ router.post('/upload', upload.fields([
         } : {}),
       };
 
-      if (dbUser?.id && /^\d+$/.test(String(dbUser.id))) {
+      // Preferir guardar el UUID de Auth (`user.id`) en `user_id` si está disponible
+      if (user?.id) {
+        insertPayload.user_id = user.id;
+      } else if (dbUser?.id && /^\d+$/.test(String(dbUser.id))) {
+        // Legacy: si la fila users.id es numérica, conservar comportamiento previo
         insertPayload.user_id = dbUser.id;
       }
 
